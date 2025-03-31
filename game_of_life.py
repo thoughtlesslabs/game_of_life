@@ -562,7 +562,7 @@ class GameOfLife:
                 # Highlight current player's row with a different color
                 row = f"\n{COLOR_BOLD}{COLOR_PLAYER}{row}{COLOR_RESET}"
             leaderboard += row
-        leaderboard += "\n"  # Added extra newline after
+        leaderboard += "\n\n"  # Added extra newline after
 
         # Add all messages below the leaderboard
         messages = []
