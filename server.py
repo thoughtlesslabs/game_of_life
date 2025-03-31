@@ -7,6 +7,7 @@ from shutil import get_terminal_size
 import os
 import signal # Import the signal module
 import time
+import argparse # <-- Add argparse import
 
 # Import the GameOfLife class and the constant
 from game_of_life import GameOfLife, RESPAWN_COOLDOWN
@@ -45,6 +46,9 @@ STABILITY_CHECK_TICKS = 20 # Number of ticks count must be stable
 last_live_counts = []
 is_board_stable = False
 # --- End Stability Tracking ---
+
+# Flag to indicate if a clean shutdown was requested
+clean_shutdown_requested = False # NEW Global flag
 
 async def run_game_loop():
     """Task to run the game simulation and check for stability."""
@@ -346,19 +350,33 @@ class GameSSHServerSession(asyncssh.SSHServerSession):
 
 class GameSSHServer(asyncssh.SSHServer):
     """Handles incoming SSH connections and creates session instances."""
-    def __init__(self):
+    def __init__(self, debug_mode=False):
         # Initialize instance variable for player_id
         self._player_id = None
-        log.debug("GameSSHServer.__init__ called (new connection instance)")
+        self.debug_mode = debug_mode # Store the debug mode flag
+        log.debug(f"GameSSHServer.__init__ called (new connection instance, debug_mode={debug_mode})")
 
     def connection_made(self, conn):
         """Called when a new SSH connection is established (pre-auth)."""
-        log.debug(f"GameSSHServer.connection_made for {conn.get_extra_info('peername')}")
-        global next_player_id, game, is_board_stable
-        # Assign player ID to instance variable
-        self._player_id = next_player_id 
-        next_player_id += 1
-        log.info(f"Assigned player ID {self._player_id} to this connection instance from {conn.get_extra_info('peername')[0] if conn.get_extra_info('peername') else 'unknown'}")
+        log.debug(f"GameSSHServer.connection_made for {conn.get_extra_info('peername')}, Debug Mode: {self.debug_mode}")
+        global next_player_id, game, is_board_stable, last_live_counts # Added last_live_counts
+        
+        # TODO: Implement persistent player state based on auth/key if not in debug mode
+        # For now, debug mode just uses sequential IDs, same as non-debug
+        if self.debug_mode:
+            log.info("Debug mode active: Assigning new sequential player ID.")
+            # Use sequential ID in debug mode
+            self._player_id = next_player_id 
+            next_player_id += 1
+            log.info(f"Assigned player ID {self._player_id} to this connection instance from {conn.get_extra_info('peername')[0] if conn.get_extra_info('peername') else 'unknown'}")
+        else:
+            # PRODUCTION/DEFAULT logic (currently same as debug, needs enhancement)
+            # Placeholder: In the future, this block would handle finding existing player data based on auth
+            log.warning("Non-debug mode connection: Using sequential ID (Persistence NOT YET IMPLEMENTED).")
+            self._player_id = next_player_id 
+            next_player_id += 1
+            log.info(f"Assigned player ID {self._player_id} to this connection instance from {conn.get_extra_info('peername')[0] if conn.get_extra_info('peername') else 'unknown'}")
+
 
         if not game:
              log.error("Game not initialized when player connected! Closing.")
@@ -372,7 +390,7 @@ class GameSSHServer(asyncssh.SSHServer):
             # If disruption was injected, manually reset the stability flag
             if is_board_stable:
                  log.info("Resetting stability flag due to player join disruption.")
-                 global last_live_counts # Need global to modify
+                 # global last_live_counts # No need for global here, already accessed
                  is_board_stable = False
                  last_live_counts = [] # Clear history
         else:
@@ -381,43 +399,68 @@ class GameSSHServer(asyncssh.SSHServer):
             # No return needed here, let connection_lost handle cleanup if it closes
 
     def connection_lost(self, exc):
-        """Called when the initial connection is lost (before session starts)."""
-        # Player ID might be None if connection_made didn't complete
-        pid = self._player_id if hasattr(self, '_player_id') else 'unknown'
-        log.warning(f"Initial connection lost for player {pid} before session started. Reason: {exc if exc else 'Closed gracefully'}")
-        # Attempt to remove player from game state if they were added
+        """Called when the SSH connection is lost."""
+        peername = self.conn.get_extra_info('peername') if hasattr(self, 'conn') else 'unknown'
+        log.info(f"Player {self._player_id} ({peername}): GameSSHServer.connection_lost. Reason: {exc if exc else 'Closed gracefully'}")
+        # Note: Session connection_lost handles removing from 'clients' and game state
+        # This connection_lost is for the main SSH connection *before* a session is fully established
+        # or if the connection drops unexpectedly.
+        # If a player ID was assigned but they disconnect before session_made,
+        # we might need to clean up game state here if add_player succeeded.
         global game
-        if game and self._player_id is not None:
-             # Check if player exists before trying to remove
-             # This might be redundant if game.remove_player handles non-existent players gracefully
-             log.debug(f"Attempting cleanup for player {self._player_id} in GameSSHServer.connection_lost")
+        if game and self._player_id is not None and self._player_id not in clients: # Check if NOT in active clients
+             # Player was added to game but session never fully started/cleaned up
+             log.warning(f"Player {self._player_id} connection lost before session cleanup. Removing from game state.")
              game.remove_player(self._player_id)
-        # No pending_connections dict to clean anymore
+        # No need to remove from 'clients' here, session_lost does that.
+        log.debug(f"Finished GameSSHServer.connection_lost for player {self._player_id}.")
 
     def begin_auth(self, username):
-        """Use instance player_id for logging."""
-        log.debug(f"Player {self._player_id}: begin_auth for user '{username}'")
-        return False # No auth required
+        # Allow any username for now, replace with actual auth later
+        # Or remove if only key auth is intended
+        log.debug(f"Player {self._player_id}: begin_auth for username '{username}' - DISABLING AUTH")
+        return False # <--- Change to False to disable authentication
+
+    def password_auth_supported(self):
+        # Disable password auth if key auth is preferred
+        return False
+
+    def public_key_auth_supported(self):
+        # Enable public key auth (needs keys configured)
+        return False # Set to True when implementing key auth
 
     def auth_completed(self):
-        """Use instance player_id for logging."""
+        """Called when the client authentication is complete."""
+        # This is a good place to confirm player ID association
         log.info(f"Player {self._player_id}: Auth completed.")
+        # No exception means auth succeeded
+        pass
 
     def session_requested(self):
-        """Use instance player_id to create the session."""
-        if self._player_id is None:
-            # This shouldn't happen if connection_made succeeded
-            log.error(f"Session requested but player_id is None for this connection. Refusing session.")
-            return None
-        
-        log.debug(f"GameSSHServer creating GameSSHServerSession for player {self._player_id}")
+        """Called when the client requests a session channel."""
+        log.debug(f"Player {self._player_id}: session_requested. Creating GameSSHServerSession.")
+        # Create and return the session instance, passing the assigned player_id
         return GameSSHServerSession(self._player_id)
 
 # --- Server Startup --- 
 
-async def start_server():
-    """Starts the SSH server and the game loop."""
-    global game, game_loop_task
+async def start_server(debug_mode=False): # <-- Pass debug_mode
+    """Starts the SSH server and the game loop. Returns True on clean shutdown, False on error/restart needed."""
+    global game, game_loop_task, shutdown_event, clean_shutdown_requested, clients, next_player_id, last_live_counts, is_board_stable
+    
+    # Reset state for potential restarts
+    game = None
+    clients = {}
+    next_player_id = 1
+    game_loop_task = None
+    shutdown_event.clear() # Ensure event is clear on start/restart
+    clean_shutdown_requested = False # Reset flag
+    last_live_counts = []
+    is_board_stable = False
+    
+    server = None # Keep track of the server task/object
+
+    log.info(f"Starting server (Debug Mode: {debug_mode})...")
 
     log.info("Attempting to load/generate server host key...")
     try:
@@ -441,145 +484,190 @@ async def start_server():
 
     log.info("Attempting to initialize game board...")
     try:
-        # Use terminal size if possible
-        try:
-            cols, rows = get_terminal_size()
-            # Use full height, width might need adjustment depending on client rendering
-            game_height = max(10, rows) # Use a minimum height
-            game_width = max(20, cols) # Use a minimum width
-            log.info(f"Terminal size detected: {cols}x{rows}. Initializing game board with size: {game_width}x{game_height}")
-        except OSError as e:
-            log.warning(f"Could not detect terminal size: {e}. Using default {DEFAULT_GAME_WIDTH}x{DEFAULT_GAME_HEIGHT}.")
-            game_width = DEFAULT_GAME_WIDTH
-            game_height = DEFAULT_GAME_HEIGHT
-        
-        game = GameOfLife(width=game_width, height=game_height)
-        log.info("Game board initialized successfully.")
-    except Exception as e: # Catch other potential GameOfLife init errors
-         log.error(f"FATAL: Failed to initialize GameOfLife: {e}", exc_info=True)
-         return # Stop execution
+        term_cols, term_rows = get_terminal_size(fallback=(DEFAULT_GAME_WIDTH, DEFAULT_GAME_HEIGHT))
+        # Adjust height slightly to leave room for status lines etc.
+        game_height = max(10, term_rows - 5) 
+        game_width = max(20, term_cols)
+        log.info(f"Terminal size detected: {term_cols}x{term_rows}. Using game size: {game_width}x{game_height}")
+    except OSError:
+        game_width, game_height = DEFAULT_GAME_WIDTH, DEFAULT_GAME_HEIGHT
+        log.warning(f"Could not detect terminal size, using defaults: {game_width}x{game_height}")
 
-    log.info("Game initialization complete.")
+    game = GameOfLife(width=game_width, height=game_height)
+    log.info("Game board initialized.")
 
-    # Start the game loop as a background task
-    log.info("Attempting to start game loop task...")
+    # Start the game loop task
+    log.info("Creating game loop task...")
+    game_loop_task = asyncio.create_task(run_game_loop())
+    game_loop_task.add_done_callback(lambda t: log.info(f"Game loop task finished: {t}"))
+
+    # Define the server factory function dynamically to pass debug_mode
+    def create_server_factory():
+        return GameSSHServer(debug_mode=debug_mode) # Pass debug_mode here
+
     try:
-        game_loop_task = asyncio.create_task(run_game_loop())
-        log.info("Game loop task created successfully.")
-    except Exception as e:
-         log.error(f"FATAL: Failed to create game loop task: {e}", exc_info=True)
-         return # Stop execution if task creation fails
-
-
-    log.info(f"Attempting to start SSH server on {SERVER_HOST}:{SERVER_PORT}...")
-    server = None # Keep track of the server object for shutdown
-    try:
+        log.info(f"Starting SSH server on {SERVER_HOST}:{SERVER_PORT}...")
+        # Pass the factory function to create_server
         server = await asyncssh.create_server(
-            GameSSHServer, SERVER_HOST, SERVER_PORT,
+            create_server_factory, # Use the factory
+            SERVER_HOST, 
+            SERVER_PORT,
             server_host_keys=SERVER_KEYS,
-            # process_factory=lambda proc: proc # REMOVED - Let asyncssh handle sessions internally
+            # process_factory=handle_client, # Replaced by session logic
         )
-        log.info(f"SSH Server started successfully and listening on {SERVER_HOST}:{SERVER_PORT}.")
-    except Exception as e:
-        log.error(f"FATAL: Failed to start SSH server: {e}", exc_info=True)
-        shutdown_event.set() # Signal game loop to stop if it started
-        if game_loop_task:
-            await game_loop_task
-        return
+        log.info("SSH server started successfully.")
 
-    # Keep server running until shutdown is signaled
-    log.info("Server setup complete. Waiting for connections or shutdown signal...")
-    await shutdown_event.wait()
+        # Wait until shutdown is signaled
+        await shutdown_event.wait()
+        log.info("Shutdown signal received.")
+        return True # Indicate clean shutdown
 
-    # --- Shutdown sequence ---
-    log.info("Shutdown signal received.")
+    except (asyncssh.Error, OSError, IOError) as exc:
+        log.error(f"SSH server failed to start or crashed: {exc}", exc_info=True)
+        # Ensure shutdown event is set so other components stop
+        shutdown_event.set()
+        return False # Indicate error, restart needed
+    except Exception as exc:
+        log.error(f"An unexpected error occurred in start_server: {exc}", exc_info=True)
+        shutdown_event.set()
+        return False # Indicate error, restart needed
+    finally:
+        log.info("Server shutting down...")
+        # Set shutdown event regardless of how we exited the try block
+        shutdown_event.set() 
 
-    # Explicitly cancel game loop task first
-    if game_loop_task and not game_loop_task.done():
-        log.info("Attempting to cancel game loop task...")
-        game_loop_task.cancel()
+        # --- Graceful Shutdown ---
+        # 1. Close listening server
+        if server:
+            log.info("Closing SSH server listener...")
+            server.close()
+            try:
+                await server.wait_closed()
+                log.info("SSH server listener closed.")
+            except Exception as e:
+                 log.warning(f"Error during server listener wait_closed: {e}")
+
+        # 2. Disconnect remaining clients
+        log.info(f"Disconnecting {len(clients)} remaining clients...")
+        # Create a list of client channels to close
+        channels_to_close = [client_data['chan'] for client_data in clients.values() if client_data.get('chan')]
+        clients.clear() # Clear the dict immediately
+        
+        for chan in channels_to_close:
+            try:
+                if chan and not chan.is_closing():
+                    # log.debug(f"Closing channel {chan}") # Verbose
+                    chan.close()
+            except Exception as e:
+                 log.warning(f"Error closing client channel during shutdown: {e}")
+        
+        # Allow some time for channels to close - might not be strictly necessary
+        await asyncio.sleep(0.1) 
+        log.info("Client disconnection process finished.")
+
+        # 3. Cancel and await game loop task
+        if game_loop_task and not game_loop_task.done():
+            log.info("Cancelling game loop task...")
+            game_loop_task.cancel()
+            try:
+                await game_loop_task
+                log.info("Game loop task finished after cancellation.")
+            except asyncio.CancelledError:
+                log.info("Game loop task confirmed cancelled.")
+            except Exception as e:
+                 log.warning(f"Error awaiting cancelled game loop task: {e}")
+        
+        log.info("Server shutdown sequence complete.")
+        # Return value determined by how the try block exited (clean or error)
+
+def handle_signal(sig, frame):
+    """Handles termination signals for graceful shutdown."""
+    global clean_shutdown_requested
+    if not clean_shutdown_requested: # Prevent multiple calls
+        log.warning(f"Received signal {sig}. Initiating graceful shutdown...")
+        clean_shutdown_requested = True
+        shutdown_event.set()
+    else:
+        log.warning(f"Received signal {sig} again, shutdown already in progress.")
+
+# --- Main Execution ---
+
+async def main(debug_mode):
+    """Main function to run the server with auto-restart."""
+    restart_delay = 5 # Seconds to wait before restarting after a crash
+    max_restarts = 5 # Limit restarts to prevent infinite loops
+    restart_count = 0
+
+    # Register signal handlers
+    loop = asyncio.get_event_loop()
+    for sig in (signal.SIGINT, signal.SIGTERM):
         try:
-            # Give it a chance to process cancellation
-            await game_loop_task
-        except asyncio.CancelledError:
-            log.info("Game loop task successfully cancelled.")
-        except Exception as e:
-            log.error(f"Error during game loop task cancellation/await: {e}", exc_info=True)
-        finally:
-            log.info("Game loop task processing complete after shutdown signal.")
+            loop.add_signal_handler(sig, handle_signal, sig, None)
+            log.debug(f"Registered signal handler for {sig.name}")
+        except NotImplementedError:
+            # Windows might not support add_signal_handler
+            log.warning(f"Could not set signal handler for {sig.name} (NotImplementedError). Ctrl+C might not shut down gracefully.")
+            # Fallback for Windows might involve signal.signal, but it's less ideal with asyncio
+            try:
+                 signal.signal(sig, lambda s, f: asyncio.create_task(shutdown_from_signal(s)))
+            except Exception as e:
+                 log.error(f"Failed to set fallback signal handler: {e}")
 
-    if server:
-        log.info("Closing SSH server...")
-        server.close()
-        await server.wait_closed()
-        log.info("SSH server closed.")
 
-    # No longer need to await game_loop_task here as it was handled above
-    # (Removed the redundant await/log block for game_loop_task)
+    while restart_count <= max_restarts:
+        log.info(f"--- Starting server instance (Attempt {restart_count + 1}/{max_restarts + 1}) ---")
+        clean_exit = await start_server(debug_mode=debug_mode)
+        
+        if clean_exit:
+            log.info("Server shut down cleanly by request. Exiting.")
+            break # Exit the restart loop
+        else:
+            restart_count += 1
+            if restart_count > max_restarts:
+                 log.error(f"Maximum restart limit ({max_restarts}) reached. Server will not be restarted again.")
+                 break
+            else:
+                 log.warning(f"Server stopped unexpectedly. Restarting in {restart_delay} seconds... ({restart_count}/{max_restarts} restarts used)")
+                 await asyncio.sleep(restart_delay)
+
+    log.info("Application exiting.")
+
+
+# Fallback signal handler function for Windows/non-supported platforms
+async def shutdown_from_signal(sig):
+    global clean_shutdown_requested
+    if not clean_shutdown_requested:
+        log.warning(f"Received signal {sig} (via signal.signal). Initiating graceful shutdown...")
+        clean_shutdown_requested = True
+        shutdown_event.set()
 
 
 if __name__ == "__main__":
-    loop = asyncio.get_event_loop()
+    parser = argparse.ArgumentParser(description="Run the Game of Life SSH server.")
+    parser.add_argument(
+        "--debug-allow-multiple-connections",
+        action="store_true",
+        help="Allow multiple connections from the same client/IP (disables persistent state logic if implemented)."
+    )
+    args = parser.parse_args()
 
-    # --- Add Signal Handling --- 
-    def handle_signal(sig, frame):
-        log.warning(f"Received signal {sig}, initiating shutdown...")
-        # Avoid calling set() multiple times if signal received rapidly
-        if not shutdown_event.is_set(): 
-            shutdown_event.set()
-
+    print(f"Starting server main process... (Debug Mode: {args.debug_allow_multiple_connections})")
     try:
-        # Add signal handlers for graceful shutdown
-        loop.add_signal_handler(signal.SIGINT, handle_signal, signal.SIGINT, None)
-        loop.add_signal_handler(signal.SIGTERM, handle_signal, signal.SIGTERM, None)
-        log.info(f"Registered signal handlers for SIGINT and SIGTERM.")
-    except NotImplementedError:
-        # Windows doesn't support add_signal_handler, KeyboardInterrupt is primary mechanism
-        log.warning("add_signal_handler not supported on this platform (likely Windows). Relying on KeyboardInterrupt.")
-    # --- End Signal Handling ---
-
-    try:
-        log.info("Starting server...")
-        # Start the server and wait for it to complete (which it won't until shutdown)
-        loop.run_until_complete(start_server())
-    except (OSError, asyncssh.Error) as exc:
-        sys.exit(f'Error starting server: {exc}')
+        # Run the main async function
+        asyncio.run(main(debug_mode=args.debug_allow_multiple_connections))
     except KeyboardInterrupt:
-        # This might still trigger on Windows or if signal handlers fail
-        log.info("Shutdown requested via KeyboardInterrupt (or signal). Handling...")
-        if not shutdown_event.is_set():
-            shutdown_event.set() # Ensure shutdown event is set
-    finally:
-        log.info("Entering final cleanup...")
-        # Ensure shutdown_event is set if loop terminates unexpectedly
-        if not shutdown_event.is_set():
-            log.warning("Loop terminated unexpectedly, forcing shutdown signal.")
-            shutdown_event.set()
+        # This might catch Ctrl+C if signal handlers didn't work
+        log.info("KeyboardInterrupt caught in __main__. Shutting down...")
+        # The shutdown_event should ideally already be set by the handler,
+        # but we set it here just in case.
+        if not clean_shutdown_requested:
+             shutdown_event.set()
+        # Allow some time for cleanup initiated by setting the event
+        # asyncio.run might already handle awaiting tasks, but a small sleep can help
+        # time.sleep(1) # Maybe not needed if asyncio.run handles cleanup
+    except Exception as e:
+         log.critical(f"Unhandled exception in main execution: {e}", exc_info=True)
+         sys.exit(1) # Exit with error code
 
-        # Give tasks a moment to shut down gracefully
-        # Gather tasks that need awaiting (should primarily be game_loop_task if start_server returned)
-        # Note: server.wait_closed() is awaited within start_server's shutdown sequence
-        tasks = [task for task in asyncio.all_tasks(loop) if task is not asyncio.current_task(loop)]
-        
-        # Check if game_loop_task exists and is among the tasks to await
-        if game_loop_task and game_loop_task in tasks:
-            log.debug(f"Explicitly identified game_loop_task ({game_loop_task.get_name()}) for final await.")
-        elif game_loop_task and not game_loop_task.done():
-            log.warning("game_loop_task exists but wasn't in asyncio.all_tasks? Adding it manually.")
-            tasks.append(game_loop_task) # Ensure it's awaited if somehow missed
-
-        if tasks:
-            log.info(f"Waiting for {len(tasks)} background tasks to complete...")
-            # Use a timeout to prevent hanging indefinitely if a task misbehaves
-            try:
-                loop.run_until_complete(asyncio.wait(tasks, timeout=5.0))
-                log.info("Background tasks completed or timed out.")
-            except Exception as e:
-                log.error(f"Error during task gathering/waiting: {e}")
-        else:
-             log.info("No background tasks found needing explicit cleanup.")
-
-        # Close the loop
-        log.info("Closing event loop...")
-        loop.close()
-        log.info("Server shut down cleanly.") 
+    log.info("Main process finished.")
+    sys.exit(0) # Ensure clean exit code 

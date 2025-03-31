@@ -283,22 +283,32 @@ class GameOfLife:
     def remove_player(self, player_id):
         """Removes a player pattern and their data from the grid."""
         if player_id in self.players:
-            # Retrieve position before deleting
+            # Retrieve position before deleting (still useful for debug prints)
             player_data = self.players.get(player_id)
-            if player_data and 'pos' in player_data:
-                 start_r, start_c = player_data['pos']
-                 # Clear the pattern area
-                 for dr, dc in PLAYER_SPAWN_PATTERN:
-                     r, c = (start_r + dr) % self.height, (start_c + dc) % self.width
-                     if self._is_valid(r,c) and self.grid[r][c] == player_id:
-                         self.grid[r][c] = INTERNAL_DEAD
-                 # print(f"DEBUG: Cleared pattern for player {player_id} at ({start_r}, {start_c})")
-            else:
-                 print(f"WARN: Player {player_id} data missing position during removal.")
+            # start_r, start_c = (-1, -1) # Initialize in case pos is missing
+            # if player_data and 'pos' in player_data:
+            #      start_r, start_c = player_data['pos']
+            # else:
+            #      print(f"WARN: Player {player_id} data missing position during removal.")
+
+            # Clear ALL cells owned by this player_id across the grid
+            removed_count = 0
+            for r in range(self.height):
+                for c in range(self.width):
+                    if self.grid[r][c] == player_id:
+                        self.grid[r][c] = INTERNAL_DEAD
+                        removed_count += 1
             
+            # if removed_count > 0:
+            #    print(f"DEBUG: Cleared {removed_count} cells for player {player_id}.")
+            # elif start_r != -1: # Only warn if we had a position but found no cells
+            #    print(f"DEBUG: No grid cells found for player {player_id} during removal (may have died out).")
+
             # Remove player entry completely
             del self.players[player_id]
             # print(f"DEBUG: Removed player {player_id} data.")
+        # else: Player not found in dict, nothing to remove from grid or dict.
+        #    print(f"DEBUG: remove_player called for player_id {player_id} not in self.players dict.")
 
     def respawn_player(self, player_id):
         """Attempts to respawn a player, respecting cooldown.
@@ -397,7 +407,7 @@ class GameOfLife:
             else:
                  status_parts.append("Respawn: Ready (r)")
         lines.append(" | ".join(status_parts))
-        lines.append(f"Cells: '{RENDER_LIVE}'=Live, '{RENDER_PLAYER}'=You, '{RENDER_OTHER_PLAYER}'=Other | Quit: (q or Ctrl+C)")
+        lines.append(f"Cells: '{RENDER_LIVE}'=Live, '{RENDER_PLAYER}'=You, '{RENDER_OTHER_PLAYER}'=Other | Quit: (q)")
 
         # --- Append Feedback Message if present and not expired --- 
         feedback_message = player_state.get('feedback_message')
