@@ -573,19 +573,23 @@ class GameOfLife:
         player_scores.sort(key=lambda x: x[1], reverse=True)
         top_3 = player_scores[:3]
         
-        # Create leaderboard string with highlighting for current player
+        # Create leaderboard string with highlighting for current player and all-time leader
         leaderboard = "\nTop 3 Players:"  # Removed extra newline before
+        
+        # Find the all-time leader (player with most generations in lead)
+        all_time_leader = max(self.players.items(), key=lambda x: x[1].get('generations_in_lead', 0))[0]
+        
         for i, (pid, score, gens) in enumerate(top_3, 1):
             row = f"\n{i}. Player {pid}: {score} cells (Leader for {gens} gens)"
             if pid == requesting_player_id:
-                # If player is the leader, use leader color (yellow)
-                if gens > 0:
+                # If player is the all-time leader, use gold color
+                if pid == all_time_leader:
                     row = f"\n{COLOR_BOLD}{COLOR_PLAYER}{row}{COLOR_RESET}"
                 else:
-                    # If player is not the leader, use player color (green)
+                    # If player is not the all-time leader, use green
                     row = f"\n{COLOR_BOLD}\033[38;5;40m{row}{COLOR_RESET}"
-            elif gens > 0:
-                # If someone else is the leader, highlight them in yellow
+            elif pid == all_time_leader:
+                # If someone else is the all-time leader, highlight them in gold
                 row = f"\n{COLOR_BOLD}{COLOR_PLAYER}{row}{COLOR_RESET}"
             leaderboard += row
         leaderboard += "\n"  # Removed extra newline after
