@@ -463,6 +463,15 @@ class GameOfLife:
                     count += 1
         return count
 
+    def get_player_cell_count(self, player_id):
+        """Counts the number of cells owned by a specific player."""
+        count = 0
+        for r in range(self.height):
+            for c in range(self.width):
+                if self.grid[r][c] == player_id:
+                    count += 1
+        return count
+
     def get_render_string(self, requesting_player_id, player_state):
         """Generates the game board render string with player-specific view."""
         # Get the player's position if they exist
@@ -544,11 +553,27 @@ class GameOfLife:
         if player_state.get('confirmation_prompt'):
             prompt = f"\n{player_state['confirmation_prompt']}"
 
+        # Generate leaderboard
+        # Get all players and their cell counts
+        player_scores = []
+        for pid in self.players:
+            cell_count = self.get_player_cell_count(pid)
+            player_scores.append((pid, cell_count))
+        
+        # Sort by cell count (descending) and take top 5
+        player_scores.sort(key=lambda x: x[1], reverse=True)
+        top_5 = player_scores[:5]
+        
+        # Create leaderboard string
+        leaderboard = "\nTop 5 Players:"
+        for i, (pid, score) in enumerate(top_5, 1):
+            leaderboard += f"\n{i}. Player {pid}: {score} cells"
+        
         # Add command prompt
         command_prompt = "\nEnter command: "
 
         # Combine everything with proper spacing
-        return '\n'.join(viewport) + legend + game_stats + respawn_info + god_mode_stats + feedback + key_instructions + prompt + command_prompt
+        return '\n'.join(viewport) + legend + game_stats + respawn_info + god_mode_stats + feedback + key_instructions + prompt + leaderboard + command_prompt
 
 # Example usage (only if run directly)
 if __name__ == "__main__":
