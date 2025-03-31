@@ -583,22 +583,24 @@ class GameOfLife:
         for i in range(1, 4):
             if i <= len(top_3):
                 pid, score, gens = top_3[i-1]
-                row = f"\n{i}. Player {pid}: {score} cells (Leader for {gens} gens)"
+                # Show "You" instead of "Player X" for the current player
+                player_text = "You" if pid == requesting_player_id else f"Player {pid}"
+                row = f"{i}. {player_text}: {score} cells (Leader for {gens} gens)"
                 if pid == requesting_player_id:
                     # If player is the all-time leader, use gold color
                     if pid == all_time_leader:
-                        row = f"\n{COLOR_BOLD}{COLOR_PLAYER}{row}{COLOR_RESET}"
+                        row = f"{COLOR_BOLD}{COLOR_PLAYER}{row}{COLOR_RESET}"
                     else:
                         # If player is not the all-time leader, use green
-                        row = f"\n{COLOR_BOLD}\033[38;5;40m{row}{COLOR_RESET}"
+                        row = f"{COLOR_BOLD}\033[38;5;40m{row}{COLOR_RESET}"
                 elif pid == all_time_leader:
                     # If someone else is the all-time leader, highlight them in gold
-                    row = f"\n{COLOR_BOLD}{COLOR_PLAYER}{row}{COLOR_RESET}"
+                    row = f"{COLOR_BOLD}{COLOR_PLAYER}{row}{COLOR_RESET}"
             else:
                 # Show placeholder text for empty positions
-                row = f"\n{i}. Waiting for players..."
-            leaderboard += row
-        leaderboard += "\n"  # Removed extra newline after
+                row = f"{i}. Waiting for players..."
+            leaderboard += f"\n{row}"
+        leaderboard += "\n"  # Add final newline after leaderboard
 
         # Add all messages below the leaderboard
         messages = []
