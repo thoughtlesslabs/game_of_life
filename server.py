@@ -61,6 +61,12 @@ async def run_game_loop():
     log.info("Starting game loop...")
     loop_count = 0 # Debug counter
     clear_screen_code = "\x1b[2J\x1b[H"
+    
+    # Wait for game to be initialized
+    while not game:
+        log.info("Waiting for game to be initialized...")
+        await asyncio.sleep(0.5)
+    
     while not shutdown_event.is_set():
         if game:
             loop_count += 1
@@ -467,8 +473,8 @@ class GameSSHServer(asyncssh.SSHServer):
 
 
         if not game:
-             log.error("Game not initialized when player connected! Closing.")
-             conn.close()
+             log.error("Game not initialized when player connected! Waiting for game initialization...")
+             # Don't close the connection, just wait for game to be initialized
              return
 
         # Add player to game state 
