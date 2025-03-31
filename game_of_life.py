@@ -554,8 +554,8 @@ class GameOfLife:
             view_width = 80
             view_height = 40
 
-        # Start with terminal setup
-        render_output = DISABLE_LINE_WRAP + HIDE_CURSOR
+        # Start with basic screen clear and cursor handling
+        render_output = CLEAR_SCREEN + HIDE_CURSOR
 
         center_r, center_c = player_pos
 
@@ -645,7 +645,7 @@ class GameOfLife:
         command_prompt = "\nEnter command: "
 
         # Combine everything with proper spacing and restore cursor
-        return render_output + '\n'.join(viewport) + overview + legend + key_instructions + leaderboard + '\n'.join(messages) + command_prompt + ENABLE_LINE_WRAP + SHOW_CURSOR
+        return render_output + '\n'.join(viewport) + overview + legend + key_instructions + leaderboard + '\n'.join(messages) + command_prompt + SHOW_CURSOR
 
 # Example usage (only if run directly)
 if __name__ == "__main__":
@@ -673,10 +673,6 @@ if __name__ == "__main__":
         # Set terminal to raw mode
         tty.setraw(sys.stdin.fileno())
         
-        # Clear screen once at start
-        sys.stdout.write(CLEAR_SCREEN)
-        sys.stdout.flush()
-        
         while True:
             current_time_test = time.time()
             if player_1_state.get('feedback_message') and current_time_test >= player_1_state.get('feedback_expiry_time', 0.0):
@@ -694,4 +690,4 @@ if __name__ == "__main__":
     finally:
         # Restore terminal settings
         termios.tcsetattr(sys.stdin, termios.TCSADRAIN, old_settings)
-        print(ENABLE_LINE_WRAP + SHOW_CURSOR)  # Ensure line wrap is enabled and cursor is shown on exit
+        print(SHOW_CURSOR)  # Ensure cursor is shown on exit
