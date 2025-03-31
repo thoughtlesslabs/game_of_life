@@ -1,156 +1,459 @@
-import os
-import sys
-import time
-import signal
 import random
-from shutil import get_terminal_size
+import os
+import asyncio
+import time
+
+# ANSI escape codes (no longer used directly in rendering string)
+# CLEAR_SCREEN = "\033[H\033[J"
+
+# --- Constants ---
+# Rendering characters
+RENDER_DEAD = " "
+RENDER_LIVE = "#"
+RENDER_PLAYER = "@"
+RENDER_OTHER_PLAYER = "P"
+
+# Internal grid states
+INTERNAL_DEAD = 0
+INTERNAL_LIVE = -1 # Use negative to distinguish from player IDs >= 1
+
+# --- Player Spawn Pattern (Glider) ---
+# Standard Glider shape relative coordinates
+# . @ .
+# . . @
+# @ @ @
+PLAYER_SPAWN_PATTERN = [(0, 1), (1, 2), (2, 0), (2, 1), (2, 2)] 
+PATTERN_WIDTH = 3 # Max width of glider pattern
+PATTERN_HEIGHT = 3 # Max height of glider pattern
+# --- End Player Spawn Pattern ---
+
+# --- Standard Patterns for Seeding ---
+STANDARD_PATTERNS = {
+    # Glider is now player spawn, maybe use others?
+    # "glider": [(0, 1), (1, 2), (2, 0), (2, 1), (2, 2)], 
+    "block": [(0, 0), (0, 1), (1, 0), (1, 1)],
+    "blinker_h": [(0,0), (0,1), (0,2)], # Horizontal Blinker (period 2 oscillator)
+    "lwss": [(0,1), (0,4), (1,0), (2,0), (2,4), (3,0), (3,1), (3,2), (3,3)] # LightWeight SpaceShip
+}
+STANDARD_PATTERN_DIMS = {
+    # "glider": (3, 3),
+    "block": (2, 2),
+    "blinker_h": (1, 3),
+    "lwss": (4, 5)
+}
+# --- End Standard Patterns ---
+
+# --- Game Constants ---
+RESPAWN_COOLDOWN = 15 # Seconds
+# --- End Game Constants ---
 
 class GameOfLife:
-    def __init__(self, initial_pattern='glider'):
-        self.running = True
-        self.generation = 0
-        self.population = 0
-        self.initial_pattern = initial_pattern
-        signal.signal(signal.SIGINT, self.handle_interrupt)
-        self.reset_board(self.initial_pattern)
+    def __init__(self, width, height):
+        self.width = width
+        self.height = height
+        # Initialize grid with internal dead state
+        self.grid = [[INTERNAL_DEAD for _ in range(width)] for _ in range(height)]
+        # Player state: player_id -> {'pos': (r, c), 'last_respawn_time': timestamp, 'respawn_count': int}
+        self.players = {}
+        self.generation_count = 0
+        # Place specific patterns instead of purely random seeding
+        # Use new standard patterns, removed glider as it's player spawn
+        self._seed_patterns(num_blocks=5, num_blinkers=5, num_lwss=3) 
 
-    def handle_interrupt(self, signum, frame):
-        self.running = False
-        print("\nGame stopped.")
-        sys.exit(0)
+    def _is_valid(self, r, c):
+        """Check if coordinates are within grid bounds."""
+        return 0 <= r < self.height and 0 <= c < self.width
 
-    def reset_board(self, pattern='random'):
-        cols, rows = get_terminal_size()
-        self.width = cols # Use full width
-        self.height = rows - 1 # Leave one row for status
-        self.board = [[0 for _ in range(self.width)] for _ in range(self.height)]
-        self.generation = 0
-        self.population = 0
+    def _is_area_clear(self, start_r, start_c, pattern_coords):
+        """Checks if the area for a pattern is empty (INTERNAL_DEAD)."""
+        for dr, dc in pattern_coords:
+            r, c = (start_r + dr) % self.height, (start_c + dc) % self.width
+            if not self._is_valid(r, c) or self.grid[r][c] != INTERNAL_DEAD:
+                return False
+        return True
 
-        if pattern == 'random':
-            self.board = [[random.choice([0, 1]) for _ in range(self.width)]
-                         for _ in range(self.height)]
-        elif pattern == 'glider':
-            self._place_glider(1, 1) # Place glider at top-left corner
-        elif pattern == 'block':
-            self._place_block(1, 1)
-        elif pattern == 'blinker':
-            self._place_blinker(1, 1)
-        elif pattern == 'lwss':
-            self._place_lwss(1, 1) # Lightweight Spaceship
-        # Add more patterns here if needed (e.g., 'block', 'blinker')
+    def _place_pattern(self, start_r, start_c, pattern_coords, state=INTERNAL_LIVE):
+        """Places a pattern using the specified state, assuming area is clear."""
+        for dr, dc in pattern_coords:
+            r, c = (start_r + dr) % self.height, (start_c + dc) % self.width
+            if self._is_valid(r, c):
+                self.grid[r][c] = state
 
-        # Calculate initial population
-        self._update_population()
-
-    def _place_glider(self, x, y):
-        """Places a glider pattern with top-left at (x, y)"""
-        glider = [(0, 1), (1, 2), (2, 0), (2, 1), (2, 2)]
-        for dx, dy in glider:
-            nx, ny = (x + dx) % self.width, (y + dy) % self.height
-            if 0 <= ny < self.height and 0 <= nx < self.width:
-                self.board[ny][nx] = 1
-
-    def _place_block(self, x, y):
-        """Places a block pattern with top-left at (x, y)"""
-        block = [(0, 0), (1, 0), (0, 1), (1, 1)]
-        for dx, dy in block:
-            nx, ny = (x + dx) % self.width, (y + dy) % self.height
-            if 0 <= ny < self.height and 0 <= nx < self.width:
-                self.board[ny][nx] = 1
-
-    def _place_blinker(self, x, y):
-        """Places a blinker pattern (vertical phase) with top-left at (x, y)"""
-        blinker = [(0, 1), (1, 1), (2, 1)] # Centered in a 3x3 box starting at x,y
-        # Adjust x,y to be the center of the 3x3 for simpler relative coords
-        center_x, center_y = x + 1, y + 1
-        blinker_rel = [(0, -1), (0, 0), (0, 1)] # Vertical blinker relative to center
-        for dx, dy in blinker_rel:
-            nx, ny = (center_x + dx) % self.width, (center_y + dy) % self.height
-            if 0 <= ny < self.height and 0 <= nx < self.width:
-                self.board[ny][nx] = 1
-
-    def _place_lwss(self, x, y):
-        """Places a Lightweight Spaceship (LWSS) pattern heading right, with top-left at (x, y)"""
-        # Coords relative to top-left (x,y) of a 5x4 bounding box
-        lwss = [
-            (1, 0), (4, 0),
-            (0, 1),
-            (0, 2), (4, 2),
-            (0, 3), (1, 3), (2, 3), (3, 3)
+    def _seed_patterns(self, num_blocks=3, num_blinkers=3, num_lwss=2):
+        """Seeds the board with a specific number of standard patterns."""
+        # Use the STANDARD_PATTERNS definitions
+        patterns_to_seed = [
+            ("block", num_blocks),
+            ("blinker_h", num_blinkers),
+            ("lwss", num_lwss)
         ]
-        for dx, dy in lwss:
-            nx, ny = (x + dx) % self.width, (y + dy) % self.height
-            if 0 <= ny < self.height and 0 <= nx < self.width:
-                self.board[ny][nx] = 1
 
-    def _update_population(self):
-        """Calculates the number of live cells."""
-        self.population = sum(sum(row) for row in self.board)
+        placements = [] # Keep track of placed pattern top-left corners and types
+        max_attempts_per_pattern = 100
 
-    def get_neighbors(self, x, y):
-        count = 0
+        for pattern_name, num_to_place in patterns_to_seed:
+            if pattern_name not in STANDARD_PATTERNS:
+                 print(f"WARN: Pattern '{pattern_name}' not defined in STANDARD_PATTERNS. Skipping.")
+                 continue
+            
+            pattern_coords = STANDARD_PATTERNS[pattern_name]
+            p_height, p_width = STANDARD_PATTERN_DIMS[pattern_name]
+            
+            placed_count = 0
+            for _ in range(num_to_place):
+                attempt = 0
+                placed_this_one = False
+                while attempt < max_attempts_per_pattern and not placed_this_one:
+                    start_r = random.randint(0, self.height - p_height)
+                    start_c = random.randint(0, self.width - p_width)
+                    
+                    # Basic overlap check
+                    too_close = False
+                    proximity = max(p_width, p_height) + 2 # Minimum distance between patterns
+                    for pr, pc, _ in placements:
+                        if abs(start_r - pr) < proximity and abs(start_c - pc) < proximity:
+                            too_close = True
+                            break
+                    if too_close:
+                        attempt += 1
+                        continue
+                    
+                    if self._is_area_clear(start_r, start_c, pattern_coords):
+                        self._place_pattern(start_r, start_c, pattern_coords, INTERNAL_LIVE)
+                        placements.append((start_r, start_c, pattern_name))
+                        placed_this_one = True
+                        placed_count += 1
+                    attempt += 1
+            print(f"DEBUG: Placed {placed_count}/{num_to_place} requested '{pattern_name}' patterns.")
+
+        if placements:
+             print(f"DEBUG: Seeded total {len(placements)} patterns.")
+        else:
+             print(f"WARN: Failed to seed any patterns.")
+
+    def _get_neighbors_state(self, r, c):
+        """Counts live neighbors and identifies unique player IDs among them."""
+        live_neighbor_count = 0
+        neighbor_player_ids = set()
+
         for i in range(-1, 2):
             for j in range(-1, 2):
                 if i == 0 and j == 0:
-                    continue
-                nx, ny = (x + i) % self.width, (y + j) % self.height
-                count += self.board[ny][nx]
-        return count
+                    continue # Skip the cell itself
+
+                # Calculate neighbor coordinates with wrapping
+                nr, nc = (r + i) % self.height, (c + j) % self.width
+
+                neighbor_state = self.grid[nr][nc]
+                if neighbor_state == INTERNAL_LIVE: # Standard live cell
+                    live_neighbor_count += 1
+                elif neighbor_state > 0: # Player cell (ID > 0)
+                    live_neighbor_count += 1
+                    neighbor_player_ids.add(neighbor_state)
+
+        return live_neighbor_count, neighbor_player_ids
 
     def next_generation(self):
-        new_board = [[0 for x in range(self.width)]
-                    for y in range(self.height)]
-        live_cells_next = 0
-        for y in range(self.height):
-            for x in range(self.width):
-                neighbors = self.get_neighbors(x, y)
-                if self.board[y][x]:
-                    if neighbors in [2, 3]:
-                        new_board[y][x] = 1
-                        live_cells_next += 1
-                    # else: cell dies, new_board[y][x] remains 0
+        """Calculates the next state of the grid based on modified Conway's rules with player influence."""
+        new_grid = [[self.grid[r][c] for c in range(self.width)] for r in range(self.height)]
+
+        for r in range(self.height):
+            for c in range(self.width):
+                current_state = self.grid[r][c]
+                live_neighbors_count, neighbor_player_ids = self._get_neighbors_state(r, c)
+                # Determine next state based purely on Conway rules
+                # Treat player cells (value > 0) as live for rule application
+                should_be_alive = False
+                is_currently_live = (current_state == INTERNAL_LIVE or current_state > 0)
+                
+                if is_currently_live:
+                    # Standard live cell survival
+                    if 2 <= live_neighbors_count <= 3:
+                        should_be_alive = True
+                else: # Currently INTERNAL_DEAD
+                    # Birth rule
+                    if live_neighbors_count == 3:
+                        should_be_alive = True
+
+                # Apply the state change or influence
+                if should_be_alive:
+                    # Check for single player influence
+                    if len(neighbor_player_ids) == 1 and live_neighbors_count > 0:
+                        influencing_pid = list(neighbor_player_ids)[0]
+                        # Check if the influencing player is different from the current cell owner (if any)
+                        # This prevents a player cell from being influenced *by itself* into INTERNAL_LIVE
+                        if influencing_pid != current_state: 
+                           new_grid[r][c] = influencing_pid # Cell becomes player-controlled
+                        # Check added for clarity: a surviving player cell not influenced stays as its ID
+                        elif current_state > 0 and influencing_pid != current_state:
+                            # This case should be rare/impossible if influence logic is correct
+                            # but ensures a player cell doesn't turn into INTERNAL_LIVE
+                            # if it survives but isn't influenced by someone else.
+                            pass # Remains its current player ID (already in new_grid)
+                    else:
+                        # Becomes/remains standard live cell if no single influence
+                        # or if it's a player cell with mixed/no player neighbors
+                        # Important: Preserve existing player cell if it wasn't overwritten by influence
+                        if not is_currently_live:
+                             new_grid[r][c] = INTERNAL_LIVE
                 else:
-                    if neighbors == 3:
-                        new_board[y][x] = 1
-                        live_cells_next += 1
-                    # else: cell stays dead, new_board[y][x] remains 0
+                    # Cell should be dead
+                    new_grid[r][c] = INTERNAL_DEAD
 
-        self.board = new_board
-        self.generation += 1
-        self.population = live_cells_next # Update population more efficiently
+        self.grid = new_grid
+        self.generation_count += 1 # Increment generation count
 
-    def draw(self):
-        os.system('cls' if os.name == 'nt' else 'clear')
-        output = []
-        for row in self.board:
-            output.append(''.join('o' if cell else ' ' for cell in row)) # Use 'o' for live cells
+    def add_player(self, player_id, inject_disruption=False):
+        """Adds a player pattern, initializes their stats, and optionally injects disruption."""
+        # REMOVED: Check for existing player - respawn handles removal first.
+        # if player_id in self.players:
+        #      print(f"DEBUG: add_player called for existing player {player_id}")
+        #      return True
 
-        # Prepare status line
-        status = f"Generation: {self.generation} | Population: {self.population}"
-        # Pad status line to full width to overwrite previous longer lines
-        status_line = status.ljust(self.width)
+        attempts = 0
+        max_attempts = (self.width * self.height) // (PATTERN_WIDTH * PATTERN_HEIGHT)
+        max_attempts = max(100, max_attempts) # Ensure reasonable attempts
+        placed_at = None
 
-        # Print board and status line
-        print("\n".join(output))
-        print(status_line, end='', flush=True) # Use end='' and flush
+        while attempts < max_attempts and placed_at is None:
+            # Choose a random top-left corner for the pattern
+            # Ensure pattern fits within bounds (subtract pattern dims)
+            start_r = random.randint(0, self.height - PATTERN_HEIGHT)
+            start_c = random.randint(0, self.width - PATTERN_WIDTH)
 
-    def run(self):
-        while self.running:
-            current_cols, current_rows = get_terminal_size()
-            # Check if size changed, use full width now
-            if (current_cols != self.width or
-                current_rows - 1 != self.height):
-                # Reset with the initial pattern on resize
-                self.reset_board(self.initial_pattern)
+            # Check if the area is clear
+            # Uses PLAYER_SPAWN_PATTERN (now glider)
+            can_place = self._is_area_clear(start_r, start_c, PLAYER_SPAWN_PATTERN)
+            
+            if can_place:
+                # Place the pattern using player_id
+                # Uses PLAYER_SPAWN_PATTERN (now glider)
+                self._place_pattern(start_r, start_c, PLAYER_SPAWN_PATTERN, player_id)
+                # Initialize player stats
+                current_time = asyncio.get_event_loop().time() if asyncio.get_running_loop() else time.time() # Use time if no loop
+                self.players[player_id] = {
+                     'pos': (start_r, start_c), 
+                     'last_respawn_time': current_time - RESPAWN_COOLDOWN, # Allow immediate respawn first time
+                     'respawn_count': 0
+                 }
+                placed_at = (start_r, start_c)
+                # print(f"DEBUG: Added player {player_id} pattern at {placed_at}")
 
-            self.draw()
-            self.next_generation()
-            time.sleep(0.1) # Keep the original sleep time
+            attempts += 1
 
+        if placed_at:
+            # --- Inject Disruption if Requested ---
+            if inject_disruption:
+                start_r, start_c = placed_at
+                disruption_radius = 3 # How far around the player to add cells
+                num_disrupt_cells = 5 # How many extra live cells to add
+                disrupted_count = 0
+                disrupt_attempts = 0
+                max_disrupt_attempts = 20
+                print(f"DEBUG: Injecting disruption around player {player_id} at ({start_r}, {start_c})")
+                while disrupted_count < num_disrupt_cells and disrupt_attempts < max_disrupt_attempts:
+                     # Pick random offset within radius, avoiding player pattern itself
+                     offset_r = random.randint(-disruption_radius, disruption_radius)
+                     offset_c = random.randint(-disruption_radius, disruption_radius)
+                     # Simple check to avoid placing directly on the glider spawn footprint
+                     # (This check is approximate, might still overlap glider path)
+                     is_on_pattern = False
+                     for dr, dc in PLAYER_SPAWN_PATTERN:
+                         if offset_r == dr and offset_c == dc:
+                             is_on_pattern = True
+                             break
+                     if is_on_pattern:
+                         disrupt_attempts += 1
+                         continue
+
+                     r, c = (start_r + offset_r) % self.height, (start_c + offset_c) % self.width
+                     if self._is_valid(r, c) and self.grid[r][c] == INTERNAL_DEAD:
+                         self.grid[r][c] = INTERNAL_LIVE
+                         disrupted_count += 1
+                         # print(f"DEBUG: Added disruption cell at ({r}, {c})")
+                     disrupt_attempts += 1
+                if disrupted_count > 0:
+                     print(f"DEBUG: Added {disrupted_count} disruption cells near player {player_id}.")
+            # --- End Disruption Injection ---
+            return True # Successfully placed player
+        else:
+             print(f"WARN: Could not find empty spot for player {player_id} pattern after {max_attempts} attempts.")
+             return False # Failed to add player
+
+    def remove_player(self, player_id):
+        """Removes a player pattern and their data from the grid."""
+        if player_id in self.players:
+            # Retrieve position before deleting
+            player_data = self.players.get(player_id)
+            if player_data and 'pos' in player_data:
+                 start_r, start_c = player_data['pos']
+                 # Clear the pattern area
+                 for dr, dc in PLAYER_SPAWN_PATTERN:
+                     r, c = (start_r + dr) % self.height, (start_c + dc) % self.width
+                     if self._is_valid(r,c) and self.grid[r][c] == player_id:
+                         self.grid[r][c] = INTERNAL_DEAD
+                 # print(f"DEBUG: Cleared pattern for player {player_id} at ({start_r}, {start_c})")
+            else:
+                 print(f"WARN: Player {player_id} data missing position during removal.")
+            
+            # Remove player entry completely
+            del self.players[player_id]
+            # print(f"DEBUG: Removed player {player_id} data.")
+
+    def respawn_player(self, player_id):
+        """Attempts to respawn a player, respecting cooldown.
+        Returns: (success: bool, message: str)
+        """
+        # Note: Cooldown check is now primarily done in server.py before calling this
+        # But keep a basic check here for safety / direct calls
+        if player_id not in self.players:
+            # If called directly after server removed player, this might happen
+            # Or if player wasn't added properly initially.
+            print(f"WARN: respawn_player called for player {player_id} not in self.players dict.")
+            # Attempt to add them as if it were a fresh join? Or return error?
+            # Returning error is safer.
+            return (False, "Player state not found. Cannot respawn.")
+            # return self.add_player(player_id) # Alternative: try adding them
+
+        player_data = self.players[player_id]
+        current_time = asyncio.get_event_loop().time() if asyncio.get_running_loop() else time.time()
+        last_respawn = player_data.get('last_respawn_time', 0)
+        time_since_respawn = current_time - last_respawn
+
+        if time_since_respawn < RESPAWN_COOLDOWN:
+            remaining = RESPAWN_COOLDOWN - time_since_respawn
+            # This message ideally shouldn't be hit if server checks first
+            return (False, f"Respawn cooldown: {remaining:.1f}s left.")
+
+        print(f"DEBUG: Respawning player {player_id}...")
+        old_respawn_count = player_data.get('respawn_count', 0)
+
+        # 1. Remove existing player pattern/data (safer to call full remove)
+        self.remove_player(player_id)
+        
+        # 2. Add player back 
+        success = self.add_player(player_id, inject_disruption=False) 
+
+        if success:
+            # 3. Update stats for the newly added player entry
+            if player_id in self.players:
+                 self.players[player_id]['last_respawn_time'] = current_time
+                 self.players[player_id]['respawn_count'] = old_respawn_count + 1
+                 print(f"DEBUG: Player {player_id} respawned. Count: {self.players[player_id]['respawn_count']}")
+                 return (True, "Respawn successful!")
+            else:
+                 print(f"ERROR: Player {player_id} added successfully but not found in dict after respawn?! ")
+                 return (False, "Respawn error (internal state inconsistency).")
+        else:
+            print(f"WARN: Failed to find spot for player {player_id} during respawn.")
+            return (False, "Respawn failed: Could not find empty space.")
+
+    def get_live_cell_count(self):
+        """Counts the total number of live cells (standard and player-owned)."""
+        count = 0
+        for r in range(self.height):
+            for c in range(self.width):
+                if self.grid[r][c] != INTERNAL_DEAD:
+                    count += 1
+        return count
+
+    def get_render_string(self, requesting_player_id, player_state):
+        """Generates a string representation of the grid, including player-specific state messages."""
+        lines = []
+        render_map = {
+            INTERNAL_DEAD: RENDER_DEAD,
+            INTERNAL_LIVE: RENDER_LIVE
+        }
+
+        # --- Render Grid --- 
+        for r in range(self.height):
+            row_str = ""
+            for c in range(self.width):
+                cell_state = self.grid[r][c]
+                if cell_state > 0: # It's a player cell
+                    if cell_state == requesting_player_id:
+                        row_str += RENDER_PLAYER
+                    else:
+                        row_str += RENDER_OTHER_PLAYER
+                else: # Dead or standard live
+                    row_str += render_map.get(cell_state, RENDER_DEAD) 
+            lines.append(row_str)
+
+        # --- Render Status Lines --- 
+        lines.append(f"--- Game Of Life --- Player {requesting_player_id} ---")
+        status_parts = []
+        status_parts.append(f"Generation: {self.generation_count}")
+        status_parts.append(f"Players: {len(self.players)}")
+        player_game_data = self.players.get(requesting_player_id) # Game data for stats
+        if player_game_data:
+            respawn_count = player_game_data.get('respawn_count', 0)
+            status_parts.append(f"Respawns: {respawn_count}")
+            current_time = asyncio.get_event_loop().time() if asyncio.get_running_loop() else time.time()
+            last_respawn = player_game_data.get('last_respawn_time', 0)
+            time_since_respawn = current_time - last_respawn
+            if time_since_respawn < RESPAWN_COOLDOWN:
+                 remaining = RESPAWN_COOLDOWN - time_since_respawn
+                 status_parts.append(f"Respawn CD: {remaining:.1f}s")
+            else:
+                 status_parts.append("Respawn: Ready (r)")
+        lines.append(" | ".join(status_parts))
+        lines.append(f"Cells: '{RENDER_LIVE}'=Live, '{RENDER_PLAYER}'=You, '{RENDER_OTHER_PLAYER}'=Other | Quit: (q or Ctrl+C)")
+
+        # --- Append Feedback Message if present and not expired --- 
+        feedback_message = player_state.get('feedback_message')
+        if feedback_message:
+             lines.append("-" * self.width) 
+             lines.append(f"> {feedback_message}")
+
+        # --- Append Confirmation Prompt if present --- 
+        confirmation_prompt = player_state.get('confirmation_prompt')
+        if confirmation_prompt:
+             # Add separator only if feedback wasn't already shown
+             if not feedback_message:
+                  lines.append("-" * self.width) 
+             lines.append(f"> {confirmation_prompt}")
+
+        return "\n".join(lines) + "\n" 
+
+# Example usage (only if run directly)
 if __name__ == "__main__":
-    # Can add argument parsing here later to select pattern
-    # Choose initial pattern: 'random', 'glider', 'block', 'blinker', 'lwss'
-    chosen_pattern = 'lwss' # Example: Start with LWSS
-    game = GameOfLife(initial_pattern=chosen_pattern)
-    game.run()
+    import asyncio 
+    import time
+
+    cols, rows = 80, 24 # Fixed size for direct run example
+    try:
+         term_cols, term_rows = os.get_terminal_size()
+         cols, rows = term_cols, term_rows - 5 # Leave more space for potential prompts
+    except OSError:
+         pass 
+
+    game = GameOfLife(width=cols, height=rows)
+    game.add_player(1)
+    game.add_player(99)
+
+    # Simulate player 1 state for testing
+    player_1_state = {
+         'confirmation_prompt': None, 
+         'feedback_message': "Test Feedback!", 
+         'feedback_expiry_time': time.time() + 5.0 
+         } 
+
+    try:
+        while True:
+            current_time_test = time.time()
+            # Simulate checking expiry
+            if player_1_state.get('feedback_message') and current_time_test >= player_1_state.get('feedback_expiry_time', 0.0):
+                 player_1_state['feedback_message'] = None
+                 player_1_state['feedback_expiry_time'] = 0.0
+            
+            render_output = game.get_render_string(requesting_player_id=1, player_state=player_1_state) 
+            print("\x1b[H\x1b[J" + render_output) # Clear screen
+            game.next_generation()
+            time.sleep(0.1)
+
+            # Example: Make feedback expire after 5s in test
+            # if current_time_test > start_time_test + 5:
+            #      player_1_state['feedback_message'] = None
+
+    except KeyboardInterrupt:
+        print("\nExiting.")
