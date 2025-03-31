@@ -37,8 +37,6 @@ HIDE_CURSOR = "\033[?25l"  # Hide cursor
 SHOW_CURSOR = "\033[?25h"  # Show cursor
 SAVE_CURSOR = "\033[s"  # Save cursor position
 RESTORE_CURSOR = "\033[u"  # Restore cursor position
-ALTERNATE_SCREEN = "\033[?1049h"  # Enable alternate screen buffer
-RESTORE_SCREEN = "\033[?1049l"  # Restore main screen buffer
 
 # Internal grid states
 INTERNAL_DEAD = 0
@@ -553,8 +551,8 @@ class GameOfLife:
             view_width = 80
             view_height = 40
 
-        # Start with alternate screen buffer and cursor handling
-        render_output = ALTERNATE_SCREEN + HIDE_CURSOR + SAVE_CURSOR
+        # Start with a simple screen clear and cursor handling
+        render_output = CLEAR_SCREEN + HIDE_CURSOR
 
         center_r, center_c = player_pos
 
@@ -644,7 +642,7 @@ class GameOfLife:
         command_prompt = "\nEnter command: "
 
         # Combine everything with proper spacing and restore cursor
-        return render_output + '\n'.join(viewport) + overview + legend + key_instructions + leaderboard + '\n'.join(messages) + command_prompt + RESTORE_CURSOR + SHOW_CURSOR + RESTORE_SCREEN
+        return render_output + '\n'.join(viewport) + overview + legend + key_instructions + leaderboard + '\n'.join(messages) + command_prompt + SHOW_CURSOR
 
 # Example usage (only if run directly)
 if __name__ == "__main__":
@@ -689,4 +687,4 @@ if __name__ == "__main__":
     finally:
         # Restore terminal settings
         termios.tcsetattr(sys.stdin, termios.TCSADRAIN, old_settings)
-        print(SHOW_CURSOR + RESTORE_SCREEN)  # Ensure cursor is shown and screen is restored on exit
+        print(SHOW_CURSOR)  # Ensure cursor is shown on exit
