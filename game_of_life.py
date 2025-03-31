@@ -15,7 +15,7 @@ COLOR_DIM = "\033[2m"
 # Colors for different cell types (using more stable colors)
 COLOR_DEAD = "\033[38;5;236m"  # Darker gray for less contrast
 COLOR_LIVE = "\033[38;5;40m"   # Softer green
-COLOR_PLAYER = "\033[38;5;220m"  # Softer yellow
+COLOR_PLAYER = "\033[38;5;40m"  # Softer green (changed from yellow)
 COLOR_OTHER = "\033[38;5;208m"  # Softer orange
 
 # Rendering characters using Braille patterns with colors
