@@ -12,18 +12,22 @@ COLOR_RESET = "\033[0m"
 COLOR_BOLD = "\033[1m"
 COLOR_DIM = "\033[2m"
 
-# Colors for different cell types
-COLOR_DEAD = "\033[38;5;240m"  # Dark gray
-COLOR_LIVE = "\033[38;5;46m"   # Bright green
-COLOR_PLAYER = "\033[38;5;226m"  # Yellow
-COLOR_OTHER = "\033[38;5;214m"  # Orange
+# Colors for different cell types (using more stable colors)
+COLOR_DEAD = "\033[38;5;236m"  # Darker gray for less contrast
+COLOR_LIVE = "\033[38;5;40m"   # Softer green
+COLOR_PLAYER = "\033[38;5;220m"  # Softer yellow
+COLOR_OTHER = "\033[38;5;208m"  # Softer orange
 
 # Rendering characters using Braille patterns with colors
-# Each Braille character can represent 8 cells (2x4 grid)
-RENDER_DEAD = f"{COLOR_DEAD}⠀{COLOR_RESET}"  # Empty Braille pattern
-RENDER_LIVE = f"{COLOR_LIVE}⠿{COLOR_RESET}"  # Full Braille pattern
-RENDER_PLAYER = f"{COLOR_PLAYER}⣿{COLOR_RESET}"  # Full Braille pattern with different color
-RENDER_OTHER_PLAYER = f"{COLOR_OTHER}⣾{COLOR_RESET}"  # Slightly different pattern for other players
+# Using more stable patterns that don't cause flickering
+RENDER_DEAD = f"{COLOR_DEAD}⠄{COLOR_RESET}"  # Light dot pattern
+RENDER_LIVE = f"{COLOR_LIVE}⠿{COLOR_RESET}"  # Full pattern
+RENDER_PLAYER = f"{COLOR_PLAYER}⣿{COLOR_RESET}"  # Full pattern
+RENDER_OTHER_PLAYER = f"{COLOR_OTHER}⣾{COLOR_RESET}"  # Slightly different pattern
+
+# Screen clearing codes
+CLEAR_SCREEN = "\033[2J\033[H"  # Clear screen and move cursor to top
+CLEAR_LINE = "\033[K"  # Clear current line
 
 # Internal grid states
 INTERNAL_DEAD = 0
@@ -466,7 +470,7 @@ class GameOfLife:
                         cell = self.grid[r][c]
                         cells.append(cell)
                 
-                # Convert the 8 cells into a Braille pattern
+                # Convert the 8 cells into a Braille pattern with smoother transitions
                 if all(c == INTERNAL_DEAD for c in cells):
                     row.append(RENDER_DEAD)
                 elif all(c == requesting_player_id for c in cells):
@@ -474,16 +478,16 @@ class GameOfLife:
                 elif all(c == INTERNAL_LIVE for c in cells):
                     row.append(RENDER_LIVE)
                 else:
-                    # If mixed, use a pattern based on majority
+                    # If mixed, use a pattern based on majority with smoother transitions
                     player_cells = sum(1 for c in cells if c == requesting_player_id)
                     live_cells = sum(1 for c in cells if c == INTERNAL_LIVE)
                     other_player_cells = sum(1 for c in cells if c > 0 and c != requesting_player_id)
                     
-                    if player_cells >= 4:
+                    if player_cells >= 3:  # Lowered threshold for smoother transitions
                         row.append(RENDER_PLAYER)
-                    elif live_cells >= 4:
+                    elif live_cells >= 3:
                         row.append(RENDER_LIVE)
-                    elif other_player_cells >= 4:
+                    elif other_player_cells >= 3:
                         row.append(RENDER_OTHER_PLAYER)
                     else:
                         row.append(RENDER_DEAD)
@@ -526,8 +530,8 @@ class GameOfLife:
         # Add command prompt
         command_prompt = "\nEnter command: "
 
-        # Combine everything with proper spacing
-        return '\n'.join(viewport) + legend + game_stats + respawn_info + god_mode_stats + feedback + key_instructions + prompt + command_prompt
+        # Combine everything with proper spacing and screen clearing
+        return CLEAR_SCREEN + '\n'.join(viewport) + legend + game_stats + respawn_info + god_mode_stats + feedback + key_instructions + prompt + command_prompt
 
 # Example usage (only if run directly)
 if __name__ == "__main__":
