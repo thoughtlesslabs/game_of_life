@@ -179,6 +179,15 @@ class GameOfLife:
         """Calculates the next state of the grid based on modified Conway's rules with player influence."""
         new_grid = [[self.grid[r][c] for c in range(self.width)] for r in range(self.height)]
 
+        # Track current leader before generation
+        current_leader = None
+        max_cells = 0
+        for pid in self.players:
+            cell_count = self.get_player_cell_count(pid)
+            if cell_count > max_cells:
+                max_cells = cell_count
+                current_leader = pid
+
         for r in range(self.height):
             for c in range(self.width):
                 current_state = self.grid[r][c]
@@ -224,6 +233,17 @@ class GameOfLife:
 
         self.grid = new_grid
         self.generation_count += 1 # Increment generation count
+
+        # Update generations in lead for current leader
+        if current_leader is not None:
+            if 'generations_in_lead' not in self.players[current_leader]:
+                self.players[current_leader]['generations_in_lead'] = 0
+            self.players[current_leader]['generations_in_lead'] += 1
+
+        # Reset generations in lead for non-leaders
+        for pid in self.players:
+            if pid != current_leader:
+                self.players[pid]['generations_in_lead'] = 0
 
     def add_player(self, player_id, inject_disruption=False):
         """Adds a player pattern, initializes their stats, and optionally injects disruption."""
@@ -548,21 +568,23 @@ class GameOfLife:
         player_scores = []
         for pid in self.players:
             cell_count = self.get_player_cell_count(pid)
-            player_scores.append((pid, cell_count))
+            # Get generations in lead from player data
+            generations_in_lead = self.players[pid].get('generations_in_lead', 0)
+            player_scores.append((pid, cell_count, generations_in_lead))
         
-        # Sort by cell count (descending) and take top 5
+        # Sort by cell count (descending) and take top 3
         player_scores.sort(key=lambda x: x[1], reverse=True)
-        top_5 = player_scores[:5]
+        top_3 = player_scores[:3]
         
         # Create leaderboard string with highlighting for current player
-        leaderboard = "\n\nTop 5 Players:"  # Added extra newline before
-        for i, (pid, score) in enumerate(top_5, 1):
-            row = f"\n{i}. Player {pid}: {score} cells"
+        leaderboard = "\nTop 3 Players:"  # Removed extra newline before
+        for i, (pid, score, gens) in enumerate(top_3, 1):
+            row = f"\n{i}. Player {pid}: {score} cells (Leader for {gens} gens)"
             if pid == requesting_player_id:
                 # Highlight current player's row with a different color
                 row = f"\n{COLOR_BOLD}{COLOR_PLAYER}{row}{COLOR_RESET}"
             leaderboard += row
-        leaderboard += "\n\n"  # Added extra newline after
+        leaderboard += "\n"  # Removed extra newline after
 
         # Add all messages below the leaderboard
         messages = []
