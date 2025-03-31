@@ -577,20 +577,26 @@ class GameOfLife:
         leaderboard = "\nTop 3 Players:"  # Removed extra newline before
         
         # Find the all-time leader (player with most generations in lead)
-        all_time_leader = max(self.players.items(), key=lambda x: x[1].get('generations_in_lead', 0))[0]
+        all_time_leader = max(self.players.items(), key=lambda x: x[1].get('generations_in_lead', 0))[0] if self.players else None
         
-        for i, (pid, score, gens) in enumerate(top_3, 1):
-            row = f"\n{i}. Player {pid}: {score} cells (Leader for {gens} gens)"
-            if pid == requesting_player_id:
-                # If player is the all-time leader, use gold color
-                if pid == all_time_leader:
+        # Always show 3 lines, with placeholder text for empty positions
+        for i in range(1, 4):
+            if i <= len(top_3):
+                pid, score, gens = top_3[i-1]
+                row = f"\n{i}. Player {pid}: {score} cells (Leader for {gens} gens)"
+                if pid == requesting_player_id:
+                    # If player is the all-time leader, use gold color
+                    if pid == all_time_leader:
+                        row = f"\n{COLOR_BOLD}{COLOR_PLAYER}{row}{COLOR_RESET}"
+                    else:
+                        # If player is not the all-time leader, use green
+                        row = f"\n{COLOR_BOLD}\033[38;5;40m{row}{COLOR_RESET}"
+                elif pid == all_time_leader:
+                    # If someone else is the all-time leader, highlight them in gold
                     row = f"\n{COLOR_BOLD}{COLOR_PLAYER}{row}{COLOR_RESET}"
-                else:
-                    # If player is not the all-time leader, use green
-                    row = f"\n{COLOR_BOLD}\033[38;5;40m{row}{COLOR_RESET}"
-            elif pid == all_time_leader:
-                # If someone else is the all-time leader, highlight them in gold
-                row = f"\n{COLOR_BOLD}{COLOR_PLAYER}{row}{COLOR_RESET}"
+            else:
+                # Show placeholder text for empty positions
+                row = f"\n{i}. Waiting for players..."
             leaderboard += row
         leaderboard += "\n"  # Removed extra newline after
 
