@@ -525,9 +525,9 @@ class GameOfLife:
         # Get terminal size for responsive viewport
         try:
             term_cols, term_rows = os.get_terminal_size()
-            # Use 80% of terminal width and 60% of terminal height
+            # Use 80% of terminal width and 50% of terminal height (reduced from 60%)
             view_width = int(term_cols * 0.8)
-            view_height = int(term_rows * 0.6)
+            view_height = int(term_rows * 0.5)  # Reduced from 0.6 to 0.5
             # Ensure minimum size
             view_width = max(60, view_width)
             view_height = max(30, view_height)
@@ -596,6 +596,7 @@ class GameOfLife:
         key_instructions = "\nKeys: r=respawn | q=quit"
         if player_state.get('debug_mode') or player_state.get('god_mode'):
             key_instructions += " | h=hot reload"
+        key_instructions += "\n"  # Add extra newline after keys
 
         # Generate leaderboard
         # Get all players and their cell counts
