@@ -583,8 +583,8 @@ class GameOfLife:
         for i in range(1, 4):
             if i <= len(top_3):
                 pid, score, gens = top_3[i-1]
-                # Show "You" instead of "Player X" for the current player
-                player_text = "You" if pid == requesting_player_id else f"Player {pid}"
+                # Show "me" instead of "Player X" for the current player
+                player_text = "me" if pid == requesting_player_id else f"Player {pid}"
                 row = f"{i}. {player_text}: {score} cells (Leader for {gens} gens)"
                 if pid == requesting_player_id:
                     # If player is the all-time leader, use gold color
