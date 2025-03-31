@@ -38,6 +38,8 @@ SHOW_CURSOR = "\033[?25h"  # Show cursor
 SAVE_CURSOR = "\033[s"  # Save cursor position
 RESTORE_CURSOR = "\033[u"  # Restore cursor position
 MOVE_CURSOR = "\033[{};{}H"  # Move cursor to position (row, col)
+DISABLE_LINE_WRAP = "\033[?7l"  # Disable line wrapping
+ENABLE_LINE_WRAP = "\033[?7h"  # Enable line wrapping
 
 # Internal grid states
 INTERNAL_DEAD = 0
@@ -552,8 +554,8 @@ class GameOfLife:
             view_width = 80
             view_height = 40
 
-        # Start with cursor handling only
-        render_output = HIDE_CURSOR
+        # Start with terminal setup
+        render_output = DISABLE_LINE_WRAP + HIDE_CURSOR
 
         center_r, center_c = player_pos
 
@@ -643,7 +645,7 @@ class GameOfLife:
         command_prompt = "\nEnter command: "
 
         # Combine everything with proper spacing and restore cursor
-        return render_output + '\n'.join(viewport) + overview + legend + key_instructions + leaderboard + '\n'.join(messages) + command_prompt + SHOW_CURSOR
+        return render_output + '\n'.join(viewport) + overview + legend + key_instructions + leaderboard + '\n'.join(messages) + command_prompt + ENABLE_LINE_WRAP + SHOW_CURSOR
 
 # Example usage (only if run directly)
 if __name__ == "__main__":
@@ -692,4 +694,4 @@ if __name__ == "__main__":
     finally:
         # Restore terminal settings
         termios.tcsetattr(sys.stdin, termios.TCSADRAIN, old_settings)
-        print(SHOW_CURSOR)  # Ensure cursor is shown on exit
+        print(ENABLE_LINE_WRAP + SHOW_CURSOR)  # Ensure line wrap is enabled and cursor is shown on exit
