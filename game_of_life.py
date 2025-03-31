@@ -28,6 +28,8 @@ RENDER_OTHER_PLAYER = "●"  # Dot for other players
 # Screen clearing codes
 CLEAR_SCREEN = "\033[2J\033[H"  # Clear screen and move cursor to top
 CLEAR_LINE = "\033[K"  # Clear current line
+CLEAR_TO_END = "\033[J"  # Clear from cursor to end of screen
+CLEAR_ALL = "\033[2J\033[H\033[3J"  # Clear screen, scrollback buffer, and move cursor to top
 
 # Internal grid states
 INTERNAL_DEAD = 0
@@ -240,8 +242,8 @@ class GameOfLife:
                 self.players[current_leader]['generations_in_lead'] = 0
             self.players[current_leader]['generations_in_lead'] += 1
 
-        # Check if we've reached 10000 generations
-        if self.generation_count >= 10000:
+        # Check if we've reached 2500 generations
+        if self.generation_count >= 2500:
             # Find the winner (player with most generations in lead)
             winner = max(self.players.items(), key=lambda x: x[1].get('generations_in_lead', 0))[0]
             
@@ -536,6 +538,9 @@ class GameOfLife:
             view_width = 80
             view_height = 40
 
+        # Start with a complete screen clear
+        render_output = CLEAR_ALL
+
         center_r, center_c = player_pos
 
         # Calculate viewport boundaries with wrapping
@@ -573,7 +578,7 @@ class GameOfLife:
         
         # Add overview section
         overview = f"\n{COLOR_BOLD}Game of Life - Multiplayer Edition{COLOR_RESET}"
-        overview += f"\nActive Players: {len(self.players)} | Current Generation: {self.generation_count}/10000"
+        overview += f"\nActive Players: {len(self.players)} | Current Generation: {self.generation_count}/2500"
         overview += f"\nYour Wins: {wins} | Respawns: {respawn_count} | Cooldown: {cooldown_remaining:.1f}s"
         overview += "\n"
         
@@ -655,7 +660,7 @@ class GameOfLife:
         command_prompt = "\nEnter command: "
 
         # Combine everything with proper spacing
-        return '\n'.join(viewport) + overview + legend + game_stats + respawn_info + god_mode_stats + key_instructions + leaderboard + '\n'.join(messages) + command_prompt
+        return render_output + '\n'.join(viewport) + overview + legend + game_stats + respawn_info + god_mode_stats + key_instructions + leaderboard + '\n'.join(messages) + command_prompt
 
 # Example usage (only if run directly)
 if __name__ == "__main__":
@@ -689,13 +694,9 @@ if __name__ == "__main__":
                  player_1_state['feedback_expiry_time'] = 0.0
             
             render_output = game.get_render_string(requesting_player_id=1, player_state=player_1_state) 
-            print("\x1b[H\x1b[J" + render_output) # Clear screen
+            print(render_output, end='', flush=True)  # Use flush=True to force immediate output
             game.next_generation()
             time.sleep(0.1)
-
-            # Example: Make feedback expire after 5s in test
-            # if current_time_test > start_time_test + 5:
-            #      player_1_state['feedback_message'] = None
 
     except KeyboardInterrupt:
         print("\nExiting.")
