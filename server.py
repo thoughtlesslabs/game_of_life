@@ -350,11 +350,9 @@ class GameSSHServerSession(asyncssh.SSHServerSession):
                 elif player_state.get('confirmation_prompt') and "hot reload" in player_state['confirmation_prompt']:
                     if data_str.lower() == 'y':
                         log.info(f"Player {self._player_id} confirmed hot reload.")
-                        # Set a flag to trigger server restart
-                        global clean_shutdown_requested
-                        clean_shutdown_requested = True
-                        shutdown_event.set()
-                        feedback_msg = "Hot reloading server..."
+                        # Trigger code reload without server restart
+                        code_reload_event.set()
+                        feedback_msg = "Hot reloading game code..."
                         feedback_expiry = 2.0
                         action_taken = True
                     else:
@@ -763,14 +761,15 @@ async def reload_code():
         # Create new game instance with same dimensions
         old_width = game.width if game else DEFAULT_GAME_WIDTH
         old_height = game.height if game else DEFAULT_GAME_HEIGHT
-        game = GameOfLife(width=old_width, height=old_height)
+        new_game = GameOfLife(width=old_width, height=old_height)
         
-        # Re-add all players to the new game instance
-        for player_id in list(clients.keys()):
-            if game.add_player(player_id, inject_disruption=False):
-                log.info(f"Re-added player {player_id} to new game instance")
-            else:
-                log.warning(f"Failed to re-add player {player_id} to new game instance")
+        # Copy over the current game state
+        new_game.grid = game.grid
+        new_game.players = game.players
+        new_game.generation_count = game.generation_count
+        
+        # Update the global game reference
+        game = new_game
         
         log.info("Code reload successful")
         return True
