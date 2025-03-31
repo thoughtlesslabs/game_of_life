@@ -257,13 +257,6 @@ class GameOfLife:
             # Find the winner (player with most generations in lead)
             winner = max(self.players.items(), key=lambda x: x[1].get('generations_in_lead', 0))[0]
             
-            # Increment win counter for the winner
-            if winner in self.players:
-                if 'wins' not in self.players[winner]:
-                    self.players[winner]['wins'] = 0
-                self.players[winner]['wins'] += 1
-                print(f"DEBUG: Player {winner} won! Total wins: {self.players[winner]['wins']}")  # Debug print
-            
             # Reset generation count
             self.generation_count = 0
             
@@ -281,6 +274,13 @@ class GameOfLife:
             
             # Clear auto reset flag after restart
             delattr(self, '_auto_reset')
+            
+            # Increment win counter for the winner after the reset is complete
+            if winner in self.players:
+                if 'wins' not in self.players[winner]:
+                    self.players[winner]['wins'] = 0
+                self.players[winner]['wins'] += 1
+                print(f"DEBUG: Player {winner} won! Total wins: {self.players[winner]['wins']}")  # Debug print
 
     def add_player(self, player_id, inject_disruption=False):
         """Adds a player pattern, initializes their stats, and optionally injects disruption."""
