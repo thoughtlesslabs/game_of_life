@@ -292,14 +292,13 @@ class GameSSHServerSession(asyncssh.SSHServerSession):
                 if data_str.lower() == 'y':
                     if game:
                         log.info(f"Player {self._player_id} (god mode) confirmed game restart")
-                        game = GameOfLife(game.width, game.height)
-                        for pid in list(clients.keys()):
-                            if pid in game.players:
-                                game.remove_player(pid)
-                        for pid in clients:
-                            game.add_player(pid)
-                        feedback_msg = "Game restarted!"
-                        feedback_expiry = 2.0
+                        success, msg = game.respawn_player(self._player_id, is_god_mode=True)
+                        if success:
+                            feedback_msg = "Game restarted!"
+                            feedback_expiry = 2.0
+                        else:
+                            feedback_msg = f"Restart failed: {msg}"
+                            feedback_expiry = 3.0
                         action_taken = True
                 else:
                     feedback_msg = "Game restart cancelled."

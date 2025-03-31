@@ -7,11 +7,23 @@ import time
 # CLEAR_SCREEN = "\033[H\033[J"
 
 # --- Constants ---
-# Rendering characters
-RENDER_DEAD = " "
-RENDER_LIVE = "#"
-RENDER_PLAYER = "@"
-RENDER_OTHER_PLAYER = "P"
+# ANSI color codes
+COLOR_RESET = "\033[0m"
+COLOR_BOLD = "\033[1m"
+COLOR_DIM = "\033[2m"
+
+# Colors for different cell types
+COLOR_DEAD = "\033[38;5;240m"  # Dark gray
+COLOR_LIVE = "\033[38;5;46m"   # Bright green
+COLOR_PLAYER = "\033[38;5;226m"  # Yellow
+COLOR_OTHER = "\033[38;5;214m"  # Orange
+
+# Rendering characters using Braille patterns with colors
+# Each Braille character can represent 8 cells (2x4 grid)
+RENDER_DEAD = f"{COLOR_DEAD}⠀{COLOR_RESET}"  # Empty Braille pattern
+RENDER_LIVE = f"{COLOR_LIVE}⠿{COLOR_RESET}"  # Full Braille pattern
+RENDER_PLAYER = f"{COLOR_PLAYER}⣿{COLOR_RESET}"  # Full Braille pattern with different color
+RENDER_OTHER_PLAYER = f"{COLOR_OTHER}⣾{COLOR_RESET}"  # Slightly different pattern for other players
 
 # Internal grid states
 INTERNAL_DEAD = 0
@@ -310,53 +322,98 @@ class GameOfLife:
         # else: Player not found in dict, nothing to remove from grid or dict.
         #    print(f"DEBUG: remove_player called for player_id {player_id} not in self.players dict.")
 
-    def respawn_player(self, player_id):
+    def respawn_player(self, player_id, is_god_mode=False):
         """Attempts to respawn a player, respecting cooldown.
+        Args:
+            player_id: The ID of the player to respawn
+            is_god_mode: If True, respawns the entire board. If False, only respawns the player.
         Returns: (success: bool, message: str)
         """
         # Note: Cooldown check is now primarily done in server.py before calling this
         # But keep a basic check here for safety / direct calls
         if player_id not in self.players:
-            # If called directly after server removed player, this might happen
-            # Or if player wasn't added properly initially.
             print(f"WARN: respawn_player called for player {player_id} not in self.players dict.")
-            # Attempt to add them as if it were a fresh join? Or return error?
-            # Returning error is safer.
             return (False, "Player state not found. Cannot respawn.")
-            # return self.add_player(player_id) # Alternative: try adding them
 
         player_data = self.players[player_id]
         current_time = asyncio.get_event_loop().time() if asyncio.get_running_loop() else time.time()
         last_respawn = player_data.get('last_respawn_time', 0)
         time_since_respawn = current_time - last_respawn
 
-        if time_since_respawn < RESPAWN_COOLDOWN:
+        if time_since_respawn < RESPAWN_COOLDOWN and not is_god_mode:
             remaining = RESPAWN_COOLDOWN - time_since_respawn
-            # This message ideally shouldn't be hit if server checks first
             return (False, f"Respawn cooldown: {remaining:.1f}s left.")
 
         print(f"DEBUG: Respawning player {player_id}...")
         old_respawn_count = player_data.get('respawn_count', 0)
 
-        # 1. Remove existing player pattern/data (safer to call full remove)
-        self.remove_player(player_id)
-        
-        # 2. Add player back 
-        success = self.add_player(player_id, inject_disruption=False) 
-
-        if success:
-            # 3. Update stats for the newly added player entry
-            if player_id in self.players:
-                 self.players[player_id]['last_respawn_time'] = current_time
-                 self.players[player_id]['respawn_count'] = old_respawn_count + 1
-                 print(f"DEBUG: Player {player_id} respawned. Count: {self.players[player_id]['respawn_count']}")
-                 return (True, "Respawn successful!")
+        if is_god_mode:
+            # God mode: Reset entire board
+            # 1. Clear all cells
+            for r in range(self.height):
+                for c in range(self.width):
+                    self.grid[r][c] = INTERNAL_DEAD
+            
+            # 2. Reset generation count
+            self.generation_count = 0
+            
+            # 3. Calculate available space for players
+            total_cells = self.width * self.height
+            num_players = len(self.players)
+            # Reserve some space for patterns (about 20% of board)
+            reserved_space = total_cells // 5
+            available_space = total_cells - reserved_space
+            
+            # If we don't have enough space for all players, reduce pattern count
+            if num_players > available_space // (PATTERN_WIDTH * PATTERN_HEIGHT):
+                print(f"WARN: High player count ({num_players}), reducing pattern count")
+                self._seed_patterns(num_blocks=2, num_blinkers=2, num_lwss=1)
             else:
-                 print(f"ERROR: Player {player_id} added successfully but not found in dict after respawn?! ")
-                 return (False, "Respawn error (internal state inconsistency).")
+                self._seed_patterns(num_blocks=5, num_blinkers=5, num_lwss=3)
+            
+            # 4. Add all players back with increased max attempts
+            failed_players = []
+            for pid in list(self.players.keys()):
+                if pid in self.players:
+                    # Increase max attempts for high player count
+                    success = self.add_player(pid, inject_disruption=False)
+                    if not success:
+                        failed_players.append(pid)
+            
+            if failed_players:
+                print(f"WARN: Failed to respawn {len(failed_players)} players in god mode restart")
+                return (False, f"Failed to respawn {len(failed_players)} players. Try again.")
+            
+            return (True, "Game board reset and all players respawned!")
         else:
-            print(f"WARN: Failed to find spot for player {player_id} during respawn.")
-            return (False, "Respawn failed: Could not find empty space.")
+            # Regular respawn: Only remove player cells
+            # 1. Remove only the player's cells (don't remove player data)
+            removed_count = 0
+            for r in range(self.height):
+                for c in range(self.width):
+                    if self.grid[r][c] == player_id:
+                        self.grid[r][c] = INTERNAL_DEAD
+                        removed_count += 1
+            
+            # 2. Add player back with moving trait
+            success = self.add_player(player_id, inject_disruption=False)
+
+            if success:
+                # 3. Update stats for the newly added player entry
+                if player_id in self.players:
+                    self.players[player_id]['last_respawn_time'] = current_time
+                    self.players[player_id]['respawn_count'] = old_respawn_count + 1
+                    # Add moving trait
+                    self.players[player_id]['moving'] = True
+                    self.players[player_id]['move_direction'] = (0, 1)  # Start moving right
+                    print(f"DEBUG: Player {player_id} respawned with moving trait. Count: {self.players[player_id]['respawn_count']}")
+                    return (True, "Respawn successful!")
+                else:
+                    print(f"ERROR: Player {player_id} added successfully but not found in dict after respawn?! ")
+                    return (False, "Respawn error (internal state inconsistency).")
+            else:
+                print(f"WARN: Failed to find spot for player {player_id} during respawn.")
+                return (False, "Respawn failed: Could not find empty space.")
 
     def get_live_cell_count(self):
         """Counts the total number of live cells (standard and player-owned)."""
@@ -368,7 +425,7 @@ class GameOfLife:
         return count
 
     def get_render_string(self, requesting_player_id, player_state):
-        """Generates the game board render string with player-specific view."""
+        """Generates the game board render string with player-specific view using Braille patterns."""
         # Get the player's position if they exist
         player_pos = self.players.get(requesting_player_id, {}).get('pos')
         if not player_pos:
@@ -378,15 +435,16 @@ class GameOfLife:
         try:
             term_cols, term_rows = os.get_terminal_size()
             # Use 80% of terminal width and 60% of terminal height
-            view_width = int(term_cols * 0.8)
-            view_height = int(term_rows * 0.6)
+            # Since each Braille character represents 2x4 cells, we can show more
+            view_width = int(term_cols * 0.8 * 4)  # 4x more cells horizontally
+            view_height = int(term_rows * 0.6 * 2)  # 2x more cells vertically
             # Ensure minimum size
-            view_width = max(60, view_width)
-            view_height = max(30, view_height)
+            view_width = max(240, view_width)  # Increased minimum width
+            view_height = max(60, view_height)  # Increased minimum height
         except OSError:
             # Fallback to default sizes if terminal size detection fails
-            view_width = 80
-            view_height = 40
+            view_width = 320  # Increased default width
+            view_height = 80  # Increased default height
 
         center_r, center_c = player_pos
 
@@ -394,36 +452,53 @@ class GameOfLife:
         start_r = (center_r - view_height // 2) % self.height
         start_c = (center_c - view_width // 2) % self.width
 
-        # Build the viewport
+        # Build the viewport using Braille patterns
         viewport = []
-        for i in range(view_height):
+        for i in range(0, view_height, 2):  # Step by 2 for Braille height
             row = []
-            for j in range(view_width):
-                # Calculate actual grid position with wrapping
-                r = (start_r + i) % self.height
-                c = (start_c + j) % self.width
-                cell = self.grid[r][c]
+            for j in range(0, view_width, 4):  # Step by 4 for Braille width
+                # Calculate the 8 cells that make up this Braille pattern
+                cells = []
+                for dr in range(2):
+                    for dc in range(4):
+                        r = (start_r + i + dr) % self.height
+                        c = (start_c + j + dc) % self.width
+                        cell = self.grid[r][c]
+                        cells.append(cell)
                 
-                # Determine what to display
-                if cell == INTERNAL_DEAD:
+                # Convert the 8 cells into a Braille pattern
+                if all(c == INTERNAL_DEAD for c in cells):
                     row.append(RENDER_DEAD)
-                elif cell == INTERNAL_LIVE:
-                    row.append(RENDER_LIVE)
-                elif cell == requesting_player_id:
+                elif all(c == requesting_player_id for c in cells):
                     row.append(RENDER_PLAYER)
+                elif all(c == INTERNAL_LIVE for c in cells):
+                    row.append(RENDER_LIVE)
                 else:
-                    row.append(RENDER_OTHER_PLAYER)
+                    # If mixed, use a pattern based on majority
+                    player_cells = sum(1 for c in cells if c == requesting_player_id)
+                    live_cells = sum(1 for c in cells if c == INTERNAL_LIVE)
+                    other_player_cells = sum(1 for c in cells if c > 0 and c != requesting_player_id)
+                    
+                    if player_cells >= 4:
+                        row.append(RENDER_PLAYER)
+                    elif live_cells >= 4:
+                        row.append(RENDER_LIVE)
+                    elif other_player_cells >= 4:
+                        row.append(RENDER_OTHER_PLAYER)
+                    else:
+                        row.append(RENDER_DEAD)
+            
             viewport.append(''.join(row))
 
-        # Build the status line
+        # Build the status line with colored legend
         player_data = self.players.get(requesting_player_id, {})
         respawn_count = player_data.get('respawn_count', 0)
         last_respawn = player_data.get('last_respawn_time', 0)
         current_time = asyncio.get_event_loop().time() if asyncio.get_running_loop() else time.time()
         cooldown_remaining = max(0, RESPAWN_COOLDOWN - (current_time - last_respawn))
         
-        # Add legend and game stats with horizontal layout
-        legend = f"\nLegend: {RENDER_DEAD}=Dead {RENDER_LIVE}=Live {RENDER_PLAYER}=You {RENDER_OTHER_PLAYER}=Other"
+        # Add legend and game stats with horizontal layout and colors
+        legend = f"\nLegend: {RENDER_DEAD}=Empty {RENDER_LIVE}=Live {RENDER_PLAYER}=You {RENDER_OTHER_PLAYER}=Other"
         
         game_stats = f" | Gen: {self.generation_count} | Players: {len(self.players)}"
         
@@ -433,24 +508,26 @@ class GameOfLife:
         god_mode_stats = ""
         if player_state.get('god_mode'):
             live_count = self.get_live_cell_count()
-            god_mode_stats = f" | GOD MODE ACTIVE | Live: {live_count} | R=Restart | g=Exit"
+            god_mode_stats = f" | {COLOR_BOLD}GOD MODE ACTIVE{COLOR_RESET} | Live: {live_count} | R=Restart | g=Exit"
 
         # Add any feedback message
         feedback = ""
         if player_state.get('feedback_message'):
             feedback = f"\n{player_state['feedback_message']}"
 
-        # Add respawn confirmation prompt if active
+        # Add key instructions
+        key_instructions = "\nKeys: r=respawn | q=quit"
+
+        # Add respawn confirmation prompt if active (moved after key instructions)
         prompt = ""
         if player_state.get('confirmation_prompt'):
             prompt = f"\n{player_state['confirmation_prompt']}"
 
-        # Add key instructions and command prompt
-        key_instructions = "\nKeys: r=respawn | q=quit"
+        # Add command prompt
         command_prompt = "\nEnter command: "
 
         # Combine everything with proper spacing
-        return '\n'.join(viewport) + legend + game_stats + respawn_info + god_mode_stats + feedback + prompt + key_instructions + command_prompt
+        return '\n'.join(viewport) + legend + game_stats + respawn_info + god_mode_stats + feedback + key_instructions + prompt + command_prompt
 
 # Example usage (only if run directly)
 if __name__ == "__main__":
