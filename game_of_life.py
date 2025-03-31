@@ -445,11 +445,12 @@ class GameOfLife:
         if player_state.get('confirmation_prompt'):
             prompt = f"\n{player_state['confirmation_prompt']}"
 
-        # Add command prompt
-        command_prompt = "\nEnter command (r=respawn, q=quit, g=god mode): "
+        # Add key instructions and command prompt
+        key_instructions = "\nKeys: r=respawn | q=quit"
+        command_prompt = "\nEnter command: "
 
         # Combine everything with proper spacing
-        return '\n'.join(viewport) + legend + game_stats + respawn_info + god_mode_stats + feedback + prompt + command_prompt
+        return '\n'.join(viewport) + legend + game_stats + respawn_info + god_mode_stats + feedback + prompt + key_instructions + command_prompt
 
 # Example usage (only if run directly)
 if __name__ == "__main__":
