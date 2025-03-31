@@ -22,7 +22,7 @@ LOG_LEVEL = logging.INFO
 GOD_MODE_KEY = 'g' # Key to enter god mode
 GOD_MODE_RESTART_KEY = 'R' # Key to restart game in god mode
 GOD_MODE_PASSWORD_KEY = 'p'  # Key to enter password
-HOT_RELOAD_KEY = 'h'  # Key to trigger hot reload (only in debug mode)
+HOT_RELOAD_KEY = 'h'  # Key to trigger hot reload (in god mode)
 # --- Game Board Size ---
 # Defaults used if terminal size detection fails
 DEFAULT_GAME_WIDTH = 100 # Increased default
@@ -169,7 +169,6 @@ class GameSSHServerSession(asyncssh.SSHServerSession):
         self._chan = None
         self._god_mode = False
         self._entering_password = False  # Track if we're in password entry mode
-        self._debug_mode = False  # Add debug mode flag
 
     def connection_made(self, chan):
         """Called when the session channel is established."""
@@ -177,9 +176,6 @@ class GameSSHServerSession(asyncssh.SSHServerSession):
         self._chan = chan
         term = chan.get_terminal_type()
         log.info(f"Player {self._player_id} established session (TERM={term})")
-
-        # Get debug mode from server instance
-        self._debug_mode = chan.get_extra_info('server').debug_mode
 
         # Store the active channel and initial state in the main clients dictionary
         clients[self._player_id] = {
@@ -189,12 +185,10 @@ class GameSSHServerSession(asyncssh.SSHServerSession):
                  'feedback_message': None, 
                  'feedback_expiry_time': 0.0,
                  'god_mode': False,
-                 'entering_password': False,  # Track password entry state
-                 'debug_mode': self._debug_mode  # Add debug mode to state
+                 'entering_password': False  # Track password entry state
                  } 
          }
         log.debug(f"Player {self._player_id} added to active clients with state.")
-        # No need to handle pending_connections anymore
 
     def pty_requested(self, term_type, term_rows, term_cols) -> bool:
          """Called when the client requests a pseudo-terminal."""
@@ -343,8 +337,8 @@ class GameSSHServerSession(asyncssh.SSHServerSession):
                     return 
 
                 # Check for hot reload in debug mode or god mode
-                elif data_str == HOT_RELOAD_KEY and (player_state.get('debug_mode') or player_state.get('god_mode')):
-                    log.info(f"Player {self._player_id} requested hot reload in {'god' if player_state.get('god_mode') else 'debug'} mode.")
+                elif data_str == HOT_RELOAD_KEY and player_state.get('god_mode'):
+                    log.info(f"Player {self._player_id} requested hot reload in god mode.")
                     player_state['confirmation_prompt'] = "Are you sure you want to hot reload the server? (y/n)"
                     action_taken = True
 
@@ -444,33 +438,20 @@ class GameSSHServerSession(asyncssh.SSHServerSession):
 
 class GameSSHServer(asyncssh.SSHServer):
     """Handles incoming SSH connections and creates session instances."""
-    def __init__(self, debug_mode=False):
+    def __init__(self):
         # Initialize instance variable for player_id
         self._player_id = None
-        self.debug_mode = debug_mode # Store the debug mode flag
-        log.debug(f"GameSSHServer.__init__ called (new connection instance, debug_mode={debug_mode})")
+        log.debug("GameSSHServer.__init__ called (new connection instance)")
 
     def connection_made(self, conn):
         """Called when a new SSH connection is established (pre-auth)."""
-        log.debug(f"GameSSHServer.connection_made for {conn.get_extra_info('peername')}, Debug Mode: {self.debug_mode}")
-        global next_player_id, game, is_board_stable, last_live_counts # Added last_live_counts
+        log.debug(f"GameSSHServer.connection_made for {conn.get_extra_info('peername')}")
+        global next_player_id, game, is_board_stable, last_live_counts
         
-        # TODO: Implement persistent player state based on auth/key if not in debug mode
-        # For now, debug mode just uses sequential IDs, same as non-debug
-        if self.debug_mode:
-            log.info("Debug mode active: Assigning new sequential player ID.")
-            # Use sequential ID in debug mode
-            self._player_id = next_player_id 
-            next_player_id += 1
-            log.info(f"Assigned player ID {self._player_id} to this connection instance from {conn.get_extra_info('peername')[0] if conn.get_extra_info('peername') else 'unknown'}")
-        else:
-            # PRODUCTION/DEFAULT logic (currently same as debug, needs enhancement)
-            # Placeholder: In the future, this block would handle finding existing player data based on auth
-            log.warning("Non-debug mode connection: Using sequential ID (Persistence NOT YET IMPLEMENTED).")
-            self._player_id = next_player_id 
-            next_player_id += 1
-            log.info(f"Assigned player ID {self._player_id} to this connection instance from {conn.get_extra_info('peername')[0] if conn.get_extra_info('peername') else 'unknown'}")
-
+        # Assign sequential player ID
+        self._player_id = next_player_id 
+        next_player_id += 1
+        log.info(f"Assigned player ID {self._player_id} to this connection instance from {conn.get_extra_info('peername')[0] if conn.get_extra_info('peername') else 'unknown'}")
 
         if not game:
              log.error("Game not initialized when player connected! Waiting for game initialization...")
@@ -484,7 +465,6 @@ class GameSSHServer(asyncssh.SSHServer):
             # If disruption was injected, manually reset the stability flag
             if is_board_stable:
                  log.info("Resetting stability flag due to player join disruption.")
-                 # global last_live_counts # No need for global here, already accessed
                  is_board_stable = False
                  last_live_counts = [] # Clear history
         else:
@@ -538,7 +518,7 @@ class GameSSHServer(asyncssh.SSHServer):
 
 # --- Server Startup --- 
 
-async def start_server(debug_mode=False): # <-- Pass debug_mode
+async def start_server():
     """Starts the SSH server and the game loop. Returns True on clean shutdown, False on error/restart needed."""
     global game, game_loop_task, shutdown_event, clean_shutdown_requested, clients, next_player_id, last_live_counts, is_board_stable
     
@@ -554,7 +534,7 @@ async def start_server(debug_mode=False): # <-- Pass debug_mode
     
     server = None # Keep track of the server task/object
 
-    log.info(f"Starting server (Debug Mode: {debug_mode})...")
+    log.info("Starting server...")
 
     log.info("Attempting to load/generate server host key...")
     try:
@@ -596,19 +576,13 @@ async def start_server(debug_mode=False): # <-- Pass debug_mode
     game_loop_task = asyncio.create_task(run_game_loop())
     game_loop_task.add_done_callback(lambda t: log.info(f"Game loop task finished: {t}"))
 
-    # Define the server factory function dynamically to pass debug_mode
-    def create_server_factory():
-        return GameSSHServer(debug_mode=debug_mode) # Pass debug_mode here
-
     try:
         log.info(f"Starting SSH server on {SERVER_HOST}:{SERVER_PORT}...")
-        # Pass the factory function to create_server
         server = await asyncssh.create_server(
-            create_server_factory, # Use the factory
+            GameSSHServer, # Use the class directly
             SERVER_HOST, 
             SERVER_PORT,
             server_host_keys=SERVER_KEYS,
-            # process_factory=handle_client, # Replaced by session logic
         )
         log.info("SSH server started successfully.")
 
@@ -687,7 +661,7 @@ def handle_signal(sig, frame):
 
 # --- Main Execution ---
 
-async def main(debug_mode):
+async def main():
     """Main function to run the server with auto-restart."""
     restart_delay = 5 # Seconds to wait before restarting after a crash
     max_restarts = 5 # Limit restarts to prevent infinite loops
@@ -708,10 +682,9 @@ async def main(debug_mode):
             except Exception as e:
                  log.error(f"Failed to set fallback signal handler: {e}")
 
-
     while restart_count <= max_restarts:
         log.info(f"--- Starting server instance (Attempt {restart_count + 1}/{max_restarts + 1}) ---")
-        clean_exit = await start_server(debug_mode=debug_mode)
+        clean_exit = await start_server()
         
         if clean_exit:
             log.info("Server shut down cleanly by request. Exiting.")
@@ -738,18 +711,10 @@ async def shutdown_from_signal(sig):
 
 
 if __name__ == "__main__":
-    parser = argparse.ArgumentParser(description="Run the Game of Life SSH server.")
-    parser.add_argument(
-        "--debug-allow-multiple-connections",
-        action="store_true",
-        help="Allow multiple connections from the same client/IP (disables persistent state logic if implemented)."
-    )
-    args = parser.parse_args()
-
-    print(f"Starting server main process... (Debug Mode: {args.debug_allow_multiple_connections})")
+    print("Starting server main process...")
     try:
         # Run the main async function
-        asyncio.run(main(debug_mode=args.debug_allow_multiple_connections))
+        asyncio.run(main())
     except KeyboardInterrupt:
         # This might catch Ctrl+C if signal handlers didn't work
         log.info("KeyboardInterrupt caught in __main__. Shutting down...")
@@ -757,9 +722,6 @@ if __name__ == "__main__":
         # but we set it here just in case.
         if not clean_shutdown_requested:
              shutdown_event.set()
-        # Allow some time for cleanup initiated by setting the event
-        # asyncio.run might already handle awaiting tasks, but a small sleep can help
-        # time.sleep(1) # Maybe not needed if asyncio.run handles cleanup
     except Exception as e:
          log.critical(f"Unhandled exception in main execution: {e}", exc_info=True)
          sys.exit(1) # Exit with error code
