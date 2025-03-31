@@ -396,34 +396,63 @@ class GameOfLife:
             
             return (True, "Game board reset and all players respawned!")
         else:
-            # Regular respawn: Only remove player cells
-            # 1. Remove only the player's cells (don't remove player data)
+            # Regular respawn: Only remove player cells and respawn nearby
+            # 1. Get the player's current position
+            current_pos = player_data.get('pos')
+            if not current_pos:
+                print(f"WARN: Player {player_id} has no position data")
+                return (False, "Respawn failed: No position data found")
+
+            # 2. Remove only the player's cells
             removed_count = 0
             for r in range(self.height):
                 for c in range(self.width):
                     if self.grid[r][c] == player_id:
                         self.grid[r][c] = INTERNAL_DEAD
                         removed_count += 1
-            
-            # 2. Add player back with moving trait
-            success = self.add_player(player_id, inject_disruption=False)
+
+            # 3. Try to respawn near the current position
+            # Start with a small offset and gradually increase if needed
+            max_offset = 5  # Maximum distance to try from current position
+            success = False
+            new_pos = None
+
+            for offset in range(1, max_offset + 1):
+                # Try different directions around the current position
+                for dr in [-offset, 0, offset]:
+                    for dc in [-offset, 0, offset]:
+                        if dr == 0 and dc == 0:
+                            continue  # Skip current position
+                        
+                        # Calculate new position with wrapping
+                        new_r = (current_pos[0] + dr) % self.height
+                        new_c = (current_pos[1] + dc) % self.width
+                        
+                        # Check if we can place the pattern here
+                        if self._is_area_clear(new_r, new_c, PLAYER_SPAWN_PATTERN):
+                            # Place the pattern
+                            self._place_pattern(new_r, new_c, PLAYER_SPAWN_PATTERN, player_id)
+                            new_pos = (new_r, new_c)
+                            success = True
+                            break
+                    if success:
+                        break
+                if success:
+                    break
 
             if success:
-                # 3. Update stats for the newly added player entry
-                if player_id in self.players:
-                    self.players[player_id]['last_respawn_time'] = current_time
-                    self.players[player_id]['respawn_count'] = old_respawn_count + 1
-                    # Add moving trait
-                    self.players[player_id]['moving'] = True
-                    self.players[player_id]['move_direction'] = (0, 1)  # Start moving right
-                    print(f"DEBUG: Player {player_id} respawned with moving trait. Count: {self.players[player_id]['respawn_count']}")
-                    return (True, "Respawn successful!")
-                else:
-                    print(f"ERROR: Player {player_id} added successfully but not found in dict after respawn?! ")
-                    return (False, "Respawn error (internal state inconsistency).")
+                # 4. Update player stats
+                self.players[player_id]['last_respawn_time'] = current_time
+                self.players[player_id]['respawn_count'] = old_respawn_count + 1
+                self.players[player_id]['pos'] = new_pos
+                # Add moving trait
+                self.players[player_id]['moving'] = True
+                self.players[player_id]['move_direction'] = (0, 1)  # Start moving right
+                print(f"DEBUG: Player {player_id} respawned near position {new_pos}. Count: {self.players[player_id]['respawn_count']}")
+                return (True, "Respawn successful!")
             else:
-                print(f"WARN: Failed to find spot for player {player_id} during respawn.")
-                return (False, "Respawn failed: Could not find empty space.")
+                print(f"WARN: Failed to find spot near current position for player {player_id} during respawn.")
+                return (False, "Respawn failed: Could not find empty space nearby.")
 
     def get_live_cell_count(self):
         """Counts the total number of live cells (standard and player-owned)."""
