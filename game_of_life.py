@@ -256,10 +256,16 @@ class GameOfLife:
             for pid in self.players:
                 self.players[pid]['generations_in_lead'] = 0
             
+            # Set auto reset flag for this reset cycle
+            self._auto_reset = True
+            
             # Perform god mode restart
             for pid in list(self.players.keys()):
                 if pid in self.players:
                     self.respawn_player(pid, is_god_mode=True)
+            
+            # Clear auto reset flag after restart
+            delattr(self, '_auto_reset')
 
     def add_player(self, player_id, inject_disruption=False):
         """Adds a player pattern, initializes their stats, and optionally injects disruption."""
@@ -399,7 +405,12 @@ class GameOfLife:
             # 2. Reset generation count
             self.generation_count = 0
             
-            # 3. Calculate available space for players
+            # 3. Reset win counters (only for manual god mode reset)
+            if not hasattr(self, '_auto_reset'):  # Only reset wins if this is a manual reset
+                for pid in self.players:
+                    self.players[pid]['wins'] = 0
+            
+            # 4. Calculate available space for players
             total_cells = self.width * self.height
             num_players = len(self.players)
             # Reserve some space for patterns (about 20% of board)
@@ -413,7 +424,7 @@ class GameOfLife:
             else:
                 self._seed_patterns(num_blocks=5, num_blinkers=5, num_lwss=3)
             
-            # 4. Add all players back with increased max attempts
+            # 5. Add all players back with increased max attempts
             failed_players = []
             for pid in list(self.players.keys()):
                 if pid in self.players:
@@ -562,17 +573,18 @@ class GameOfLife:
         
         # Add overview section
         overview = f"\n{COLOR_BOLD}Game of Life - Multiplayer Edition{COLOR_RESET}"
-        overview += f"\nGoal: Lead for the most generations out of 10000 to win!"
-        overview += f"\nCurrent Generation: {self.generation_count}/10000"
-        overview += f"\nYour Wins: {wins}"
+        overview += f"\nActive Players: {len(self.players)} | Current Generation: {self.generation_count}/10000"
+        overview += f"\nYour Wins: {wins} | Respawns: {respawn_count} | Cooldown: {cooldown_remaining:.1f}s"
         overview += "\n"
         
         # Add legend and game stats with horizontal layout
         legend = f"\nLegend: {RENDER_DEAD}=Empty {RENDER_LIVE}=Live {RENDER_PLAYER}=You {RENDER_OTHER_PLAYER}=Other"
         
-        game_stats = f" | Gen: {self.generation_count} | Players: {len(self.players)}"
+        # Remove generation count and players count from game_stats since they're now in overview
+        game_stats = ""
         
-        respawn_info = f" | Respawns: {respawn_count} | Cooldown: {cooldown_remaining:.1f}s"
+        # Remove respawn info since it's now in overview
+        respawn_info = ""
         
         # Add god mode stats if enabled
         god_mode_stats = ""
