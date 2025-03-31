@@ -583,7 +583,14 @@ class GameOfLife:
         for i, (pid, score, gens) in enumerate(top_3, 1):
             row = f"\n{i}. Player {pid}: {score} cells (Leader for {gens} gens)"
             if pid == requesting_player_id:
-                # Highlight current player's row with a different color
+                # If player is the leader, use leader color (yellow)
+                if gens > 0:
+                    row = f"\n{COLOR_BOLD}{COLOR_PLAYER}{row}{COLOR_RESET}"
+                else:
+                    # If player is not the leader, use player color (green)
+                    row = f"\n{COLOR_BOLD}\033[38;5;40m{row}{COLOR_RESET}"
+            elif gens > 0:
+                # If someone else is the leader, highlight them in yellow
                 row = f"\n{COLOR_BOLD}{COLOR_PLAYER}{row}{COLOR_RESET}"
             leaderboard += row
         leaderboard += "\n"  # Removed extra newline after
