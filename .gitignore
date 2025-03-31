@@ -10,3 +10,5 @@ venv
 # Ignore __init__.py
 __init__.py
 
+ssh_host_key.pem
+
