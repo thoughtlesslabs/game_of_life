@@ -411,16 +411,16 @@ class GameOfLife:
         current_time = asyncio.get_event_loop().time() if asyncio.get_running_loop() else time.time()
         cooldown_remaining = max(0, RESPAWN_COOLDOWN - (current_time - last_respawn))
         
+        # Add legend and game stats
+        legend = f"Legend: {RENDER_DEAD}=Dead {RENDER_LIVE}=Live {RENDER_PLAYER}=You {RENDER_OTHER_PLAYER}=Other"
+        game_stats = f"Gen: {self.generation_count} | Players: {len(self.players)}"
+        respawn_info = f"Respawns: {respawn_count} | Cooldown: {cooldown_remaining:.1f}s"
+        
         # Add god mode stats if enabled
         god_mode_stats = ""
         if player_state.get('god_mode'):
             live_count = self.get_live_cell_count()
-            player_count = len(self.players)
-            generation = self.generation_count
-            god_mode_stats = f" | GOD MODE ACTIVE | Gen: {generation} | Live: {live_count} | Players: {player_count}"
-
-        # Build the status line
-        status_line = f"Respawns: {respawn_count} | Cooldown: {cooldown_remaining:.1f}s{god_mode_stats}"
+            god_mode_stats = f"\nGOD MODE ACTIVE | Live: {live_count} | Press 'R' to restart | Press 'g' to exit"
 
         # Add any feedback message
         feedback = ""
@@ -433,7 +433,7 @@ class GameOfLife:
             prompt = f"\n{player_state['confirmation_prompt']}"
 
         # Combine everything
-        return '\n'.join(viewport) + '\n' + status_line + feedback + prompt
+        return '\n'.join(viewport) + '\n' + legend + '\n' + game_stats + '\n' + respawn_info + god_mode_stats + feedback + prompt
 
 # Example usage (only if run directly)
 if __name__ == "__main__":
