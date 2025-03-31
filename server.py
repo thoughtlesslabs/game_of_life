@@ -576,6 +576,7 @@ async def start_server(debug_mode=False): # <-- Pass debug_mode
 
     log.info("Host key check/generation complete.")
 
+    # Initialize game board first
     log.info("Attempting to initialize game board...")
     try:
         term_cols, term_rows = get_terminal_size(fallback=(DEFAULT_GAME_WIDTH, DEFAULT_GAME_HEIGHT))
@@ -590,7 +591,7 @@ async def start_server(debug_mode=False): # <-- Pass debug_mode
     game = GameOfLife(width=game_width, height=game_height)
     log.info("Game board initialized.")
 
-    # Start the game loop task
+    # Start the game loop task BEFORE starting the server
     log.info("Creating game loop task...")
     game_loop_task = asyncio.create_task(run_game_loop())
     game_loop_task.add_done_callback(lambda t: log.info(f"Game loop task finished: {t}"))
