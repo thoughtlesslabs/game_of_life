@@ -240,11 +240,6 @@ class GameOfLife:
                 self.players[current_leader]['generations_in_lead'] = 0
             self.players[current_leader]['generations_in_lead'] += 1
 
-        # Reset generations in lead for non-leaders
-        for pid in self.players:
-            if pid != current_leader:
-                self.players[pid]['generations_in_lead'] = 0
-
     def add_player(self, player_id, inject_disruption=False):
         """Adds a player pattern, initializes their stats, and optionally injects disruption."""
         # REMOVED: Check for existing player - respawn handles removal first.
