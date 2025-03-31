@@ -8,6 +8,10 @@ import os
 import signal # Import the signal module
 import time
 import argparse # <-- Add argparse import
+import importlib
+import watchdog.observers
+from watchdog.events import FileSystemEventHandler
+from pathlib import Path
 
 # Import the GameOfLife class and the constant
 from game_of_life import GameOfLife, RESPAWN_COOLDOWN
@@ -40,6 +44,9 @@ clients = {} # player_id -> {'chan': SSH Channel, 'state': {'confirmation_prompt
 next_player_id = 1 # Start player IDs from 1
 game_loop_task: asyncio.Task | None = None
 shutdown_event = asyncio.Event()
+clean_shutdown_requested = False # NEW Global flag
+code_reload_event = asyncio.Event()  # New event for code reload
+observer = None  # Global observer for file watching
 
 # --- Respawn Confirmation State ---
 # State is now stored per-player in the `clients` dictionary
@@ -51,9 +58,6 @@ STABILITY_CHECK_TICKS = 20 # Number of ticks count must be stable
 last_live_counts = []
 is_board_stable = False
 # --- End Stability Tracking ---
-
-# Flag to indicate if a clean shutdown was requested
-clean_shutdown_requested = False # NEW Global flag
 
 async def run_game_loop():
     """Task to run the game simulation and check for stability."""
@@ -529,12 +533,30 @@ async def start_server():
     game_loop_task = None
     shutdown_event.clear() # Ensure event is clear on start/restart
     clean_shutdown_requested = False # Reset flag
+    code_reload_event.clear()  # Clear the reload event
     last_live_counts = []
     is_board_stable = False
     
     server = None # Keep track of the server task/object
 
     log.info("Starting server...")
+
+    # Start file watcher
+    start_file_watcher()
+
+    # Start code reload task
+    async def handle_code_reload():
+        while not shutdown_event.is_set():
+            await code_reload_event.wait()
+            if not shutdown_event.is_set():
+                success = await reload_code()
+                if success:
+                    log.info("Code reload completed successfully")
+                else:
+                    log.error("Code reload failed")
+                code_reload_event.clear()
+
+    reload_task = asyncio.create_task(handle_code_reload())
 
     log.info("Attempting to load/generate server host key...")
     try:
@@ -646,6 +668,17 @@ async def start_server():
             except Exception as e:
                  log.warning(f"Error awaiting cancelled game loop task: {e}")
         
+        # Cancel the reload task
+        if not reload_task.done():
+            reload_task.cancel()
+            try:
+                await reload_task
+            except asyncio.CancelledError:
+                pass
+
+        # Stop file watcher
+        stop_file_watcher()
+
         log.info("Server shutdown sequence complete.")
         # Return value determined by how the try block exited (clean or error)
 
@@ -709,6 +742,57 @@ async def shutdown_from_signal(sig):
         clean_shutdown_requested = True
         shutdown_event.set()
 
+class CodeChangeHandler(FileSystemEventHandler):
+    """Handler for code file changes."""
+    def on_modified(self, event):
+        if event.src_path.endswith('.py'):
+            log.info(f"Code change detected in {event.src_path}")
+            code_reload_event.set()
+
+async def reload_code():
+    """Reloads the code modules."""
+    global game, clients, next_player_id, last_live_counts, is_board_stable
+    
+    log.info("Reloading code modules...")
+    
+    try:
+        # Reload the game module
+        importlib.reload(sys.modules['game_of_life'])
+        from game_of_life import GameOfLife, RESPAWN_COOLDOWN
+        
+        # Create new game instance with same dimensions
+        old_width = game.width if game else DEFAULT_GAME_WIDTH
+        old_height = game.height if game else DEFAULT_GAME_HEIGHT
+        game = GameOfLife(width=old_width, height=old_height)
+        
+        # Re-add all players to the new game instance
+        for player_id in list(clients.keys()):
+            if game.add_player(player_id, inject_disruption=False):
+                log.info(f"Re-added player {player_id} to new game instance")
+            else:
+                log.warning(f"Failed to re-add player {player_id} to new game instance")
+        
+        log.info("Code reload successful")
+        return True
+    except Exception as e:
+        log.error(f"Error during code reload: {e}", exc_info=True)
+        return False
+
+def start_file_watcher():
+    """Starts the file watcher to detect code changes."""
+    global observer
+    observer = watchdog.observers.Observer()
+    observer.schedule(CodeChangeHandler(), path='.', recursive=False)
+    observer.start()
+    log.info("File watcher started")
+
+def stop_file_watcher():
+    """Stops the file watcher."""
+    global observer
+    if observer:
+        observer.stop()
+        observer.join()
+        log.info("File watcher stopped")
 
 if __name__ == "__main__":
     print("Starting server main process...")
