@@ -2,6 +2,9 @@ import random
 import os
 import asyncio
 import time
+import sys
+import termios
+import tty
 
 # ANSI escape codes (no longer used directly in rendering string)
 # CLEAR_SCREEN = "\033[H\033[J"
@@ -30,6 +33,10 @@ CLEAR_SCREEN = "\033[2J\033[H"  # Clear screen and move cursor to top
 CLEAR_LINE = "\033[K"  # Clear current line
 CLEAR_TO_END = "\033[J"  # Clear from cursor to end of screen
 CLEAR_ALL = "\033[2J\033[H\033[3J"  # Clear screen, scrollback buffer, and move cursor to top
+HIDE_CURSOR = "\033[?25l"  # Hide cursor
+SHOW_CURSOR = "\033[?25h"  # Show cursor
+SAVE_CURSOR = "\033[s"  # Save cursor position
+RESTORE_CURSOR = "\033[u"  # Restore cursor position
 
 # Internal grid states
 INTERNAL_DEAD = 0
@@ -249,7 +256,10 @@ class GameOfLife:
             
             # Increment win counter for the winner
             if winner in self.players:
-                self.players[winner]['wins'] = self.players[winner].get('wins', 0) + 1
+                if 'wins' not in self.players[winner]:
+                    self.players[winner]['wins'] = 0
+                self.players[winner]['wins'] += 1
+                print(f"DEBUG: Player {winner} won! Total wins: {self.players[winner]['wins']}")  # Debug print
             
             # Reset generation count
             self.generation_count = 0
@@ -409,8 +419,11 @@ class GameOfLife:
             
             # 3. Reset win counters (only for manual god mode reset)
             if not hasattr(self, '_auto_reset'):  # Only reset wins if this is a manual reset
+                print(f"DEBUG: Manual god mode reset - resetting win counters")  # Debug print
                 for pid in self.players:
                     self.players[pid]['wins'] = 0
+            else:
+                print(f"DEBUG: Auto reset - preserving win counters")  # Debug print
             
             # 4. Calculate available space for players
             total_cells = self.width * self.height
@@ -538,8 +551,8 @@ class GameOfLife:
             view_width = 80
             view_height = 40
 
-        # Start with a complete screen clear
-        render_output = CLEAR_ALL
+        # Start with a complete screen clear and cursor handling
+        render_output = HIDE_CURSOR + SAVE_CURSOR + CLEAR_ALL
 
         center_r, center_c = player_pos
 
@@ -659,8 +672,8 @@ class GameOfLife:
         # Add command prompt
         command_prompt = "\nEnter command: "
 
-        # Combine everything with proper spacing
-        return render_output + '\n'.join(viewport) + overview + legend + game_stats + respawn_info + god_mode_stats + key_instructions + leaderboard + '\n'.join(messages) + command_prompt
+        # Combine everything with proper spacing and restore cursor
+        return render_output + '\n'.join(viewport) + overview + legend + game_stats + respawn_info + god_mode_stats + key_instructions + leaderboard + '\n'.join(messages) + command_prompt + RESTORE_CURSOR + SHOW_CURSOR
 
 # Example usage (only if run directly)
 if __name__ == "__main__":
@@ -686,6 +699,9 @@ if __name__ == "__main__":
          } 
 
     try:
+        # Set terminal to raw mode
+        tty.setraw(sys.stdin.fileno())
+        
         while True:
             current_time_test = time.time()
             # Simulate checking expiry
@@ -694,9 +710,14 @@ if __name__ == "__main__":
                  player_1_state['feedback_expiry_time'] = 0.0
             
             render_output = game.get_render_string(requesting_player_id=1, player_state=player_1_state) 
-            print(render_output, end='', flush=True)  # Use flush=True to force immediate output
+            sys.stdout.write(render_output)
+            sys.stdout.flush()
             game.next_generation()
             time.sleep(0.1)
 
     except KeyboardInterrupt:
         print("\nExiting.")
+    finally:
+        # Restore terminal settings
+        termios.tcsetattr(sys.stdin, termios.TCSADRAIN, old_settings)
+        print(SHOW_CURSOR)  # Ensure cursor is shown on exit
