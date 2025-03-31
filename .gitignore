@@ -12,3 +12,9 @@ __init__.py
 
 ssh_host_key.pem
 
+# God mode configuration
+god_mode_config.py
+
+# Nginx configuration
+nginx.conf
+SETUP_NGINX.md

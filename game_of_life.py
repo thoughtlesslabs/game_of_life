@@ -368,62 +368,72 @@ class GameOfLife:
         return count
 
     def get_render_string(self, requesting_player_id, player_state):
-        """Generates a string representation of the grid, including player-specific state messages."""
-        lines = []
-        render_map = {
-            INTERNAL_DEAD: RENDER_DEAD,
-            INTERNAL_LIVE: RENDER_LIVE
-        }
+        """Generates the game board render string with player-specific view."""
+        # Get the player's position if they exist
+        player_pos = self.players.get(requesting_player_id, {}).get('pos')
+        if not player_pos:
+            return "Error: Player not found in game state."
 
-        # --- Render Grid --- 
-        for r in range(self.height):
-            row_str = ""
-            for c in range(self.width):
-                cell_state = self.grid[r][c]
-                if cell_state > 0: # It's a player cell
-                    if cell_state == requesting_player_id:
-                        row_str += RENDER_PLAYER
-                    else:
-                        row_str += RENDER_OTHER_PLAYER
-                else: # Dead or standard live
-                    row_str += render_map.get(cell_state, RENDER_DEAD) 
-            lines.append(row_str)
+        # Calculate viewport boundaries
+        view_height = 20  # Fixed viewport height
+        view_width = 40   # Fixed viewport width
+        center_r, center_c = player_pos
 
-        # --- Render Status Lines --- 
-        lines.append(f"--- Game Of Life --- Player {requesting_player_id} ---")
-        status_parts = []
-        status_parts.append(f"Generation: {self.generation_count}")
-        status_parts.append(f"Players: {len(self.players)}")
-        player_game_data = self.players.get(requesting_player_id) # Game data for stats
-        if player_game_data:
-            respawn_count = player_game_data.get('respawn_count', 0)
-            status_parts.append(f"Respawns: {respawn_count}")
-            current_time = asyncio.get_event_loop().time() if asyncio.get_running_loop() else time.time()
-            last_respawn = player_game_data.get('last_respawn_time', 0)
-            time_since_respawn = current_time - last_respawn
-            if time_since_respawn < RESPAWN_COOLDOWN:
-                 remaining = RESPAWN_COOLDOWN - time_since_respawn
-                 status_parts.append(f"Respawn CD: {remaining:.1f}s")
-            else:
-                 status_parts.append("Respawn: Ready (r)")
-        lines.append(" | ".join(status_parts))
-        lines.append(f"Cells: '{RENDER_LIVE}'=Live, '{RENDER_PLAYER}'=You, '{RENDER_OTHER_PLAYER}'=Other | Quit: (q)")
+        # Calculate viewport boundaries with wrapping
+        start_r = (center_r - view_height // 2) % self.height
+        start_c = (center_c - view_width // 2) % self.width
 
-        # --- Append Feedback Message if present and not expired --- 
-        feedback_message = player_state.get('feedback_message')
-        if feedback_message:
-             lines.append("-" * self.width) 
-             lines.append(f"> {feedback_message}")
+        # Build the viewport
+        viewport = []
+        for i in range(view_height):
+            row = []
+            for j in range(view_width):
+                # Calculate actual grid position with wrapping
+                r = (start_r + i) % self.height
+                c = (start_c + j) % self.width
+                cell = self.grid[r][c]
+                
+                # Determine what to display
+                if cell == INTERNAL_DEAD:
+                    row.append(RENDER_DEAD)
+                elif cell == INTERNAL_LIVE:
+                    row.append(RENDER_LIVE)
+                elif cell == requesting_player_id:
+                    row.append(RENDER_PLAYER)
+                else:
+                    row.append(RENDER_OTHER_PLAYER)
+            viewport.append(''.join(row))
 
-        # --- Append Confirmation Prompt if present --- 
-        confirmation_prompt = player_state.get('confirmation_prompt')
-        if confirmation_prompt:
-             # Add separator only if feedback wasn't already shown
-             if not feedback_message:
-                  lines.append("-" * self.width) 
-             lines.append(f"> {confirmation_prompt}")
+        # Build the status line
+        player_data = self.players.get(requesting_player_id, {})
+        respawn_count = player_data.get('respawn_count', 0)
+        last_respawn = player_data.get('last_respawn_time', 0)
+        current_time = asyncio.get_event_loop().time() if asyncio.get_running_loop() else time.time()
+        cooldown_remaining = max(0, RESPAWN_COOLDOWN - (current_time - last_respawn))
+        
+        # Add god mode stats if enabled
+        god_mode_stats = ""
+        if player_state.get('god_mode'):
+            live_count = self.get_live_cell_count()
+            player_count = len(self.players)
+            generation = self.generation_count
+            god_mode_stats = f" | Gen: {generation} | Live: {live_count} | Players: {player_count}"
 
-        return "\n".join(lines) + "\n" 
+        # Build the status line
+        status_line = f"Respawns: {respawn_count} | Cooldown: {cooldown_remaining:.1f}s{god_mode_stats}"
+
+        # Add any feedback message
+        feedback = ""
+        if player_state.get('feedback_message'):
+            feedback = f"\n{player_state['feedback_message']}"
+
+        # Add respawn confirmation prompt if active
+        prompt = ""
+        if player_state.get('confirmation_prompt'):
+            prompt = f"\n{player_state['confirmation_prompt']}"
+
+        # Combine everything
+        return '\n'.join(viewport) + '\n' + status_line + feedback + prompt
 
 # Example usage (only if run directly)
 if __name__ == "__main__":

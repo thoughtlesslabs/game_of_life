@@ -11,6 +11,7 @@ import argparse # <-- Add argparse import
 
 # Import the GameOfLife class and the constant
 from game_of_life import GameOfLife, RESPAWN_COOLDOWN
+from god_mode_config import GOD_MODE_PASSWORD
 
 # --- Configuration ---
 SERVER_HOST = '0.0.0.0' # Listen on all interfaces
@@ -18,6 +19,9 @@ SERVER_PORT = 8022      # Port for SSH connections (make sure it's not used)
 GAME_TICK_RATE = 0.1    # Seconds between game generations
 SERVER_KEYS = ['ssh_host_key'] # Path to server's private key
 LOG_LEVEL = logging.INFO
+GOD_MODE_KEY = 'g' # Key to enter god mode
+GOD_MODE_RESTART_KEY = 'R' # Key to restart game in god mode
+GOD_MODE_PASSWORD_KEY = 'p'  # Key to enter password
 # --- Game Board Size ---
 # Defaults used if terminal size detection fails
 DEFAULT_GAME_WIDTH = 100 # Increased default
@@ -30,7 +34,7 @@ log = logging.getLogger(__name__)
 
 # Global state
 game: GameOfLife | None = None
-clients = {} # player_id -> {'chan': SSH Channel, 'state': {'confirmation_prompt': str | None}}
+clients = {} # player_id -> {'chan': SSH Channel, 'state': {'confirmation_prompt': str | None, 'god_mode': bool}}
 # pending_connections = {} # REMOVED
 next_player_id = 1 # Start player IDs from 1
 game_loop_task: asyncio.Task | None = None
@@ -156,6 +160,8 @@ class GameSSHServerSession(asyncssh.SSHServerSession):
         log.debug(f"GameSSHServerSession.__init__ called for player {player_id}")
         self._player_id = player_id
         self._chan = None
+        self._god_mode = False
+        self._entering_password = False  # Track if we're in password entry mode
 
     def connection_made(self, chan):
         """Called when the session channel is established."""
@@ -170,7 +176,9 @@ class GameSSHServerSession(asyncssh.SSHServerSession):
              'state': {
                  'confirmation_prompt': None,
                  'feedback_message': None, 
-                 'feedback_expiry_time': 0.0
+                 'feedback_expiry_time': 0.0,
+                 'god_mode': False,
+                 'entering_password': False  # Track password entry state
                  } 
          }
         log.debug(f"Player {self._player_id} added to active clients with state.")
@@ -219,12 +227,12 @@ class GameSSHServerSession(asyncssh.SSHServerSession):
                 return 
             else:
                 try:
-                    data_str = data.decode('utf-8', errors='ignore').lower().strip()
+                    data_str = data.decode('utf-8', errors='ignore').strip()
                 except Exception as e:
                     log.warning(f"Player {self._player_id}: Error decoding byte input {data!r}: {e}")
                     data_str = None 
         elif isinstance(data, str):
-            data_str = data.lower().strip()
+            data_str = data.strip()
         # --- End Input Type Handling ---
 
         # Get current player state (if connected)
@@ -237,38 +245,84 @@ class GameSSHServerSession(asyncssh.SSHServerSession):
                  log.warning(f"Player {self._player_id} sent input but has no client_data entry.")
                  return # Cannot process further
 
-            # --- Check for pending Respawn Confirmation --- 
-            is_confirming = player_state.get('confirmation_prompt') is not None
-            if is_confirming:
-                confirmation_key = data_str # The key pressed during confirmation
-                player_state['confirmation_prompt'] = None # Clear prompt state immediately
-                current_time = asyncio.get_event_loop().time() if asyncio.get_running_loop() else time.time()
-                result_message = None
+            # --- Handle Password Entry ---
+            if player_state.get('entering_password'):
+                if data_str == GOD_MODE_PASSWORD:
+                    player_state['god_mode'] = True
+                    player_state['entering_password'] = False
+                    feedback_msg = "God mode activated. Press 'R' to restart game."
+                    feedback_expiry = 3.0
+                    action_taken = True
+                else:
+                    player_state['entering_password'] = False
+                    feedback_msg = "Invalid password. God mode access denied."
+                    feedback_expiry = 3.0
+                    action_taken = True
 
-                if confirmation_key == 'y':
+            # --- Handle God Mode Activation ---
+            elif data_str == GOD_MODE_KEY:
+                if not player_state.get('god_mode'):
+                    player_state['confirmation_prompt'] = "Enter god mode password:"
+                    player_state['entering_password'] = True
+                    action_taken = True
+                else:
+                    player_state['confirmation_prompt'] = "Are you sure you want to exit god mode? (y/n)"
+                    action_taken = True
+
+            # --- Handle God Mode Confirmation ---
+            elif player_state.get('confirmation_prompt') and "exit god mode" in player_state['confirmation_prompt']:
+                if data_str.lower() == 'y':
+                    player_state['god_mode'] = False
+                    feedback_msg = "God mode deactivated."
+                    feedback_expiry = 2.0
+                    action_taken = True
+                else:
+                    feedback_msg = "God mode exit cancelled."
+                    feedback_expiry = 2.0
+                    action_taken = True
+                player_state['confirmation_prompt'] = None
+
+            # --- Handle God Mode Restart ---
+            elif data_str == GOD_MODE_RESTART_KEY and player_state.get('god_mode'):
+                player_state['confirmation_prompt'] = "Are you sure you want to restart the game? (y/n)"
+                action_taken = True
+
+            # --- Handle Game Restart Confirmation ---
+            elif player_state.get('confirmation_prompt') and "restart the game" in player_state['confirmation_prompt']:
+                if data_str.lower() == 'y':
+                    if game:
+                        log.info(f"Player {self._player_id} (god mode) confirmed game restart")
+                        game = GameOfLife(game.width, game.height)
+                        for pid in list(clients.keys()):
+                            if pid in game.players:
+                                game.remove_player(pid)
+                        for pid in clients:
+                            game.add_player(pid)
+                        feedback_msg = "Game restarted!"
+                        feedback_expiry = 2.0
+                        action_taken = True
+                else:
+                    feedback_msg = "Game restart cancelled."
+                    feedback_expiry = 2.0
+                    action_taken = True
+                player_state['confirmation_prompt'] = None
+
+            # --- Handle Regular Respawn Confirmation ---
+            elif player_state.get('confirmation_prompt') and "Respawn clears ALL your cells" in player_state['confirmation_prompt']:
+                if data_str.lower() == 'y':
                     log.info(f"Player {self._player_id} confirmed respawn ('y').")
                     if game:
-                         success, message = game.respawn_player(self._player_id)
-                         log.info(f"Player {self._player_id} respawn result: Success={success}, Msg: {message}")
-                         result_message = message # Use message from respawn
-                    else:
-                         result_message = "Game not ready for respawn."
-                elif confirmation_key == 'n':
-                     log.info(f"Player {self._player_id} cancelled respawn ('n').")
-                     result_message = "Respawn cancelled."
+                        game.respawn_player(self._player_id)
+                        feedback_msg = "Respawned!"
+                        feedback_expiry = 2.0
+                        action_taken = True
                 else:
-                     log.info(f"Player {self._player_id} gave invalid respawn confirmation ('{confirmation_key}'). Cancelling.")
-                     result_message = f"Invalid confirmation '{confirmation_key}'. Respawn cancelled."
-                
-                # Set feedback state instead of sending message directly
-                if result_message:
-                     player_state['feedback_message'] = result_message
-                     player_state['feedback_expiry_time'] = current_time + 3.0
+                    feedback_msg = "Respawn cancelled."
+                    feedback_expiry = 2.0
+                    action_taken = True
+                player_state['confirmation_prompt'] = None
 
-                action_taken = True 
-                # Prompt cleared, state set, let render loop show feedback
-            
-            # --- Process regular commands if no confirmation pending and data_str is valid --- 
+            # --- Process Regular Commands ---
             elif data_str is not None:
                 if data_str == 'q':
                     log.info(f"Player {self._player_id} requested disconnect ('q'). Closing connection.")
@@ -315,6 +369,12 @@ class GameSSHServerSession(asyncssh.SSHServerSession):
             # 4. Log if input type was unexpected 
             elif not action_taken and not isinstance(data, bytes): 
                 log.debug(f"Player {self._player_id} sent unhandled data type: {data!r} (type: {type(data)}), datatype={datatype}.")
+
+            # --- Update Feedback State ---
+            if feedback_msg:
+                current_time = asyncio.get_event_loop().time() if asyncio.get_running_loop() else time.time()
+                player_state['feedback_message'] = feedback_msg
+                player_state['feedback_expiry_time'] = current_time + feedback_expiry
 
         except Exception as e:
             log.error(f"Player {self._player_id}: **** Unhandled exception during input processing for '{data_str}': {e} ****", exc_info=True)
