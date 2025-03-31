@@ -232,7 +232,7 @@ class GameOfLife:
                     new_grid[r][c] = INTERNAL_DEAD
 
         self.grid = new_grid
-        self.generation_count += 1 # Increment generation count
+        self.generation_count += 1
 
         # Update generations in lead for current leader
         if current_leader is not None:
@@ -240,13 +240,29 @@ class GameOfLife:
                 self.players[current_leader]['generations_in_lead'] = 0
             self.players[current_leader]['generations_in_lead'] += 1
 
+        # Check if we've reached 10000 generations
+        if self.generation_count >= 10000:
+            # Find the winner (player with most generations in lead)
+            winner = max(self.players.items(), key=lambda x: x[1].get('generations_in_lead', 0))[0]
+            
+            # Increment win counter for the winner
+            if winner in self.players:
+                self.players[winner]['wins'] = self.players[winner].get('wins', 0) + 1
+            
+            # Reset generation count
+            self.generation_count = 0
+            
+            # Reset generations in lead for all players
+            for pid in self.players:
+                self.players[pid]['generations_in_lead'] = 0
+            
+            # Perform god mode restart
+            for pid in list(self.players.keys()):
+                if pid in self.players:
+                    self.respawn_player(pid, is_god_mode=True)
+
     def add_player(self, player_id, inject_disruption=False):
         """Adds a player pattern, initializes their stats, and optionally injects disruption."""
-        # REMOVED: Check for existing player - respawn handles removal first.
-        # if player_id in self.players:
-        #      print(f"DEBUG: add_player called for existing player {player_id}")
-        #      return True
-
         attempts = 0
         max_attempts = (self.width * self.height) // (PATTERN_WIDTH * PATTERN_HEIGHT)
         max_attempts = max(100, max_attempts) # Ensure reasonable attempts
@@ -271,8 +287,9 @@ class GameOfLife:
                 self.players[player_id] = {
                      'pos': (start_r, start_c), 
                      'last_respawn_time': current_time - RESPAWN_COOLDOWN, # Allow immediate respawn first time
-                     'respawn_count': 0
-                 }
+                     'respawn_count': 0,
+                     'wins': 0  # Initialize win counter
+                }
                 placed_at = (start_r, start_c)
                 # print(f"DEBUG: Added player {player_id} pattern at {placed_at}")
 
@@ -538,9 +555,17 @@ class GameOfLife:
         # Build the status line
         player_data = self.players.get(requesting_player_id, {})
         respawn_count = player_data.get('respawn_count', 0)
+        wins = player_data.get('wins', 0)  # Get win count
         last_respawn = player_data.get('last_respawn_time', 0)
         current_time = asyncio.get_event_loop().time() if asyncio.get_running_loop() else time.time()
         cooldown_remaining = max(0, RESPAWN_COOLDOWN - (current_time - last_respawn))
+        
+        # Add overview section
+        overview = f"\n{COLOR_BOLD}Game of Life - Multiplayer Edition{COLOR_RESET}"
+        overview += f"\nGoal: Lead for the most generations out of 10000 to win!"
+        overview += f"\nCurrent Generation: {self.generation_count}/10000"
+        overview += f"\nYour Wins: {wins}"
+        overview += "\n"
         
         # Add legend and game stats with horizontal layout
         legend = f"\nLegend: {RENDER_DEAD}=Empty {RENDER_LIVE}=Live {RENDER_PLAYER}=You {RENDER_OTHER_PLAYER}=Other"
@@ -617,7 +642,7 @@ class GameOfLife:
         command_prompt = "\nEnter command: "
 
         # Combine everything with proper spacing
-        return '\n'.join(viewport) + legend + game_stats + respawn_info + god_mode_stats + key_instructions + leaderboard + '\n'.join(messages) + command_prompt
+        return '\n'.join(viewport) + overview + legend + game_stats + respawn_info + god_mode_stats + key_instructions + leaderboard + '\n'.join(messages) + command_prompt
 
 # Example usage (only if run directly)
 if __name__ == "__main__":
