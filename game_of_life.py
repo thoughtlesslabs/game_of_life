@@ -37,6 +37,7 @@ HIDE_CURSOR = "\033[?25l"  # Hide cursor
 SHOW_CURSOR = "\033[?25h"  # Show cursor
 SAVE_CURSOR = "\033[s"  # Save cursor position
 RESTORE_CURSOR = "\033[u"  # Restore cursor position
+MOVE_CURSOR = "\033[{};{}H"  # Move cursor to position (row, col)
 
 # Internal grid states
 INTERNAL_DEAD = 0
@@ -551,8 +552,8 @@ class GameOfLife:
             view_width = 80
             view_height = 40
 
-        # Start with a simple screen clear and cursor handling
-        render_output = CLEAR_SCREEN + HIDE_CURSOR
+        # Start with cursor handling only
+        render_output = HIDE_CURSOR
 
         center_r, center_c = player_pos
 
@@ -669,6 +670,10 @@ if __name__ == "__main__":
     try:
         # Set terminal to raw mode
         tty.setraw(sys.stdin.fileno())
+        
+        # Clear screen once at start
+        sys.stdout.write(CLEAR_SCREEN)
+        sys.stdout.flush()
         
         while True:
             current_time_test = time.time()
