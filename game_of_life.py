@@ -540,18 +540,8 @@ class GameOfLife:
             live_count = self.get_live_cell_count()
             god_mode_stats = f" | GOD MODE ACTIVE | Live: {live_count} | R=Restart | g=Exit"
 
-        # Add any feedback message
-        feedback = ""
-        if player_state.get('feedback_message'):
-            feedback = f"\n{player_state['feedback_message']}"
-
         # Add key instructions
         key_instructions = "\nKeys: r=respawn | q=quit"
-
-        # Add respawn confirmation prompt if active (moved after key instructions)
-        prompt = ""
-        if player_state.get('confirmation_prompt'):
-            prompt = f"\n{player_state['confirmation_prompt']}"
 
         # Generate leaderboard
         # Get all players and their cell counts
@@ -564,16 +554,32 @@ class GameOfLife:
         player_scores.sort(key=lambda x: x[1], reverse=True)
         top_5 = player_scores[:5]
         
-        # Create leaderboard string
-        leaderboard = "\nTop 5 Players:"
+        # Create leaderboard string with highlighting for current player
+        leaderboard = "\n\nTop 5 Players:"  # Added extra newline before
         for i, (pid, score) in enumerate(top_5, 1):
-            leaderboard += f"\n{i}. Player {pid}: {score} cells"
+            row = f"\n{i}. Player {pid}: {score} cells"
+            if pid == requesting_player_id:
+                # Highlight current player's row with a different color
+                row = f"\n{COLOR_BOLD}{COLOR_PLAYER}{row}{COLOR_RESET}"
+            leaderboard += row
+        leaderboard += "\n"  # Added extra newline after
+
+        # Add all messages below the leaderboard
+        messages = []
+        
+        # Add respawn confirmation prompt if active
+        if player_state.get('confirmation_prompt'):
+            messages.append(player_state['confirmation_prompt'])
+        
+        # Add any feedback message
+        if player_state.get('feedback_message'):
+            messages.append(player_state['feedback_message'])
         
         # Add command prompt
         command_prompt = "\nEnter command: "
 
         # Combine everything with proper spacing
-        return '\n'.join(viewport) + legend + game_stats + respawn_info + god_mode_stats + feedback + key_instructions + prompt + leaderboard + command_prompt
+        return '\n'.join(viewport) + legend + game_stats + respawn_info + god_mode_stats + key_instructions + leaderboard + '\n'.join(messages) + command_prompt
 
 # Example usage (only if run directly)
 if __name__ == "__main__":
