@@ -20,10 +20,10 @@ COLOR_OTHER = "\033[38;5;208m"  # Softer orange
 
 # Rendering characters using Braille patterns with colors
 # Using more stable patterns that don't cause flickering
-RENDER_DEAD = f"{COLOR_DEAD}⠄{COLOR_RESET}"  # Light dot pattern
-RENDER_LIVE = f"{COLOR_LIVE}⠿{COLOR_RESET}"  # Full pattern
-RENDER_PLAYER = f"{COLOR_PLAYER}⣿{COLOR_RESET}"  # Full pattern
-RENDER_OTHER_PLAYER = f"{COLOR_OTHER}⣾{COLOR_RESET}"  # Slightly different pattern
+RENDER_DEAD = " "  # Space for dead cells
+RENDER_LIVE = "█"  # Block for live cells
+RENDER_PLAYER = "★"  # Star for player
+RENDER_OTHER_PLAYER = "●"  # Dot for other players
 
 # Screen clearing codes
 CLEAR_SCREEN = "\033[2J\033[H"  # Clear screen and move cursor to top
@@ -45,17 +45,20 @@ PATTERN_HEIGHT = 3 # Max height of glider pattern
 
 # --- Standard Patterns for Seeding ---
 STANDARD_PATTERNS = {
-    # Glider is now player spawn, maybe use others?
-    # "glider": [(0, 1), (1, 2), (2, 0), (2, 1), (2, 2)], 
     "block": [(0, 0), (0, 1), (1, 0), (1, 1)],
     "blinker_h": [(0,0), (0,1), (0,2)], # Horizontal Blinker (period 2 oscillator)
-    "lwss": [(0,1), (0,4), (1,0), (2,0), (2,4), (3,0), (3,1), (3,2), (3,3)] # LightWeight SpaceShip
+    "lwss": [(0,1), (0,4), (1,0), (2,0), (2,4), (3,0), (3,1), (3,2), (3,3)], # LightWeight SpaceShip
+    "glider": [(0, 1), (1, 2), (2, 0), (2, 1), (2, 2)], # Add glider back as a pattern
+    "beacon": [(0,0), (0,1), (1,0), (1,1), (2,2), (2,3), (3,2), (3,3)], # Beacon pattern
+    "toad": [(0,1), (0,2), (0,3), (1,0), (1,1), (1,2)] # Toad pattern
 }
 STANDARD_PATTERN_DIMS = {
-    # "glider": (3, 3),
     "block": (2, 2),
     "blinker_h": (1, 3),
-    "lwss": (4, 5)
+    "lwss": (4, 5),
+    "glider": (3, 3),
+    "beacon": (4, 4),
+    "toad": (2, 4)
 }
 # --- End Standard Patterns ---
 
@@ -97,11 +100,14 @@ class GameOfLife:
 
     def _seed_patterns(self, num_blocks=3, num_blinkers=3, num_lwss=2):
         """Seeds the board with a specific number of standard patterns."""
-        # Use the STANDARD_PATTERNS definitions
+        # Use more varied patterns
         patterns_to_seed = [
             ("block", num_blocks),
             ("blinker_h", num_blinkers),
-            ("lwss", num_lwss)
+            ("lwss", num_lwss),
+            ("beacon", 2),  # Add some beacons
+            ("toad", 2),    # Add some toads
+            ("glider", 3)   # Add some gliders
         ]
 
         placements = [] # Keep track of placed pattern top-left corners and types
@@ -123,9 +129,9 @@ class GameOfLife:
                     start_r = random.randint(0, self.height - p_height)
                     start_c = random.randint(0, self.width - p_width)
                     
-                    # Basic overlap check
+                    # Basic overlap check with increased spacing
                     too_close = False
-                    proximity = max(p_width, p_height) + 2 # Minimum distance between patterns
+                    proximity = max(p_width, p_height) + 4  # Increased minimum distance between patterns
                     for pr, pc, _ in placements:
                         if abs(start_r - pr) < proximity and abs(start_c - pc) < proximity:
                             too_close = True
@@ -429,7 +435,7 @@ class GameOfLife:
         return count
 
     def get_render_string(self, requesting_player_id, player_state):
-        """Generates the game board render string with player-specific view using Braille patterns."""
+        """Generates the game board render string with player-specific view."""
         # Get the player's position if they exist
         player_pos = self.players.get(requesting_player_id, {}).get('pos')
         if not player_pos:
@@ -439,16 +445,15 @@ class GameOfLife:
         try:
             term_cols, term_rows = os.get_terminal_size()
             # Use 80% of terminal width and 60% of terminal height
-            # Since each Braille character represents 2x4 cells, we can show more
-            view_width = int(term_cols * 0.8 * 4)  # 4x more cells horizontally
-            view_height = int(term_rows * 0.6 * 2)  # 2x more cells vertically
+            view_width = int(term_cols * 0.8)
+            view_height = int(term_rows * 0.6)
             # Ensure minimum size
-            view_width = max(240, view_width)  # Increased minimum width
-            view_height = max(60, view_height)  # Increased minimum height
+            view_width = max(60, view_width)
+            view_height = max(30, view_height)
         except OSError:
             # Fallback to default sizes if terminal size detection fails
-            view_width = 320  # Increased default width
-            view_height = 80  # Increased default height
+            view_width = 80
+            view_height = 40
 
         center_r, center_c = player_pos
 
@@ -456,52 +461,35 @@ class GameOfLife:
         start_r = (center_r - view_height // 2) % self.height
         start_c = (center_c - view_width // 2) % self.width
 
-        # Build the viewport using Braille patterns
+        # Build the viewport
         viewport = []
-        for i in range(0, view_height, 2):  # Step by 2 for Braille height
+        for i in range(view_height):
             row = []
-            for j in range(0, view_width, 4):  # Step by 4 for Braille width
-                # Calculate the 8 cells that make up this Braille pattern
-                cells = []
-                for dr in range(2):
-                    for dc in range(4):
-                        r = (start_r + i + dr) % self.height
-                        c = (start_c + j + dc) % self.width
-                        cell = self.grid[r][c]
-                        cells.append(cell)
+            for j in range(view_width):
+                # Calculate actual grid position with wrapping
+                r = (start_r + i) % self.height
+                c = (start_c + j) % self.width
+                cell = self.grid[r][c]
                 
-                # Convert the 8 cells into a Braille pattern with smoother transitions
-                if all(c == INTERNAL_DEAD for c in cells):
+                # Determine what to display
+                if cell == INTERNAL_DEAD:
                     row.append(RENDER_DEAD)
-                elif all(c == requesting_player_id for c in cells):
-                    row.append(RENDER_PLAYER)
-                elif all(c == INTERNAL_LIVE for c in cells):
+                elif cell == INTERNAL_LIVE:
                     row.append(RENDER_LIVE)
+                elif cell == requesting_player_id:
+                    row.append(RENDER_PLAYER)
                 else:
-                    # If mixed, use a pattern based on majority with smoother transitions
-                    player_cells = sum(1 for c in cells if c == requesting_player_id)
-                    live_cells = sum(1 for c in cells if c == INTERNAL_LIVE)
-                    other_player_cells = sum(1 for c in cells if c > 0 and c != requesting_player_id)
-                    
-                    if player_cells >= 3:  # Lowered threshold for smoother transitions
-                        row.append(RENDER_PLAYER)
-                    elif live_cells >= 3:
-                        row.append(RENDER_LIVE)
-                    elif other_player_cells >= 3:
-                        row.append(RENDER_OTHER_PLAYER)
-                    else:
-                        row.append(RENDER_DEAD)
-            
+                    row.append(RENDER_OTHER_PLAYER)
             viewport.append(''.join(row))
 
-        # Build the status line with colored legend
+        # Build the status line
         player_data = self.players.get(requesting_player_id, {})
         respawn_count = player_data.get('respawn_count', 0)
         last_respawn = player_data.get('last_respawn_time', 0)
         current_time = asyncio.get_event_loop().time() if asyncio.get_running_loop() else time.time()
         cooldown_remaining = max(0, RESPAWN_COOLDOWN - (current_time - last_respawn))
         
-        # Add legend and game stats with horizontal layout and colors
+        # Add legend and game stats with horizontal layout
         legend = f"\nLegend: {RENDER_DEAD}=Empty {RENDER_LIVE}=Live {RENDER_PLAYER}=You {RENDER_OTHER_PLAYER}=Other"
         
         game_stats = f" | Gen: {self.generation_count} | Players: {len(self.players)}"
@@ -512,7 +500,7 @@ class GameOfLife:
         god_mode_stats = ""
         if player_state.get('god_mode'):
             live_count = self.get_live_cell_count()
-            god_mode_stats = f" | {COLOR_BOLD}GOD MODE ACTIVE{COLOR_RESET} | Live: {live_count} | R=Restart | g=Exit"
+            god_mode_stats = f" | GOD MODE ACTIVE | Live: {live_count} | R=Restart | g=Exit"
 
         # Add any feedback message
         feedback = ""
@@ -530,8 +518,8 @@ class GameOfLife:
         # Add command prompt
         command_prompt = "\nEnter command: "
 
-        # Combine everything with proper spacing and screen clearing
-        return CLEAR_SCREEN + '\n'.join(viewport) + legend + game_stats + respawn_info + god_mode_stats + feedback + key_instructions + prompt + command_prompt
+        # Combine everything with proper spacing
+        return '\n'.join(viewport) + legend + game_stats + respawn_info + god_mode_stats + feedback + key_instructions + prompt + command_prompt
 
 # Example usage (only if run directly)
 if __name__ == "__main__":
