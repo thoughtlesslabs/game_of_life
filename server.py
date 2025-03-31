@@ -250,8 +250,8 @@ class GameSSHServerSession(asyncssh.SSHServerSession):
                 if data_str == GOD_MODE_PASSWORD:
                     player_state['god_mode'] = True
                     player_state['entering_password'] = False
-                    feedback_msg = "God mode activated. Press 'R' to restart game."
-                    feedback_expiry = 3.0
+                    feedback_msg = "GOD MODE ACTIVATED! Press 'R' to restart game."
+                    feedback_expiry = 5.0
                     action_taken = True
                 else:
                     player_state['entering_password'] = False
@@ -273,8 +273,8 @@ class GameSSHServerSession(asyncssh.SSHServerSession):
             elif player_state.get('confirmation_prompt') and "exit god mode" in player_state['confirmation_prompt']:
                 if data_str.lower() == 'y':
                     player_state['god_mode'] = False
-                    feedback_msg = "God mode deactivated."
-                    feedback_expiry = 2.0
+                    feedback_msg = "GOD MODE DEACTIVATED"
+                    feedback_expiry = 3.0
                     action_taken = True
                 else:
                     feedback_msg = "God mode exit cancelled."

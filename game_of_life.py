@@ -417,7 +417,7 @@ class GameOfLife:
             live_count = self.get_live_cell_count()
             player_count = len(self.players)
             generation = self.generation_count
-            god_mode_stats = f" | Gen: {generation} | Live: {live_count} | Players: {player_count}"
+            god_mode_stats = f" | GOD MODE ACTIVE | Gen: {generation} | Live: {live_count} | Players: {player_count}"
 
         # Build the status line
         status_line = f"Respawns: {respawn_count} | Cooldown: {cooldown_remaining:.1f}s{god_mode_stats}"
