@@ -562,6 +562,8 @@ class GameOfLife:
 
         # Add key instructions
         key_instructions = "\nKeys: r=respawn | q=quit"
+        if player_state.get('debug_mode') or player_state.get('god_mode'):
+            key_instructions += " | h=hot reload"
 
         # Generate leaderboard
         # Get all players and their cell counts

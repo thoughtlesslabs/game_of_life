@@ -22,6 +22,7 @@ LOG_LEVEL = logging.INFO
 GOD_MODE_KEY = 'g' # Key to enter god mode
 GOD_MODE_RESTART_KEY = 'R' # Key to restart game in god mode
 GOD_MODE_PASSWORD_KEY = 'p'  # Key to enter password
+HOT_RELOAD_KEY = 'h'  # Key to trigger hot reload (only in debug mode)
 # --- Game Board Size ---
 # Defaults used if terminal size detection fails
 DEFAULT_GAME_WIDTH = 100 # Increased default
@@ -162,6 +163,7 @@ class GameSSHServerSession(asyncssh.SSHServerSession):
         self._chan = None
         self._god_mode = False
         self._entering_password = False  # Track if we're in password entry mode
+        self._debug_mode = False  # Add debug mode flag
 
     def connection_made(self, chan):
         """Called when the session channel is established."""
@@ -169,6 +171,9 @@ class GameSSHServerSession(asyncssh.SSHServerSession):
         self._chan = chan
         term = chan.get_terminal_type()
         log.info(f"Player {self._player_id} established session (TERM={term})")
+
+        # Get debug mode from server instance
+        self._debug_mode = chan.get_extra_info('server').debug_mode
 
         # Store the active channel and initial state in the main clients dictionary
         clients[self._player_id] = {
@@ -178,7 +183,8 @@ class GameSSHServerSession(asyncssh.SSHServerSession):
                  'feedback_message': None, 
                  'feedback_expiry_time': 0.0,
                  'god_mode': False,
-                 'entering_password': False  # Track password entry state
+                 'entering_password': False,  # Track password entry state
+                 'debug_mode': self._debug_mode  # Add debug mode to state
                  } 
          }
         log.debug(f"Player {self._player_id} added to active clients with state.")
@@ -329,6 +335,29 @@ class GameSSHServerSession(asyncssh.SSHServerSession):
                         self._chan.close() 
                     action_taken = True
                     return 
+
+                # Check for hot reload in debug mode or god mode
+                elif data_str == HOT_RELOAD_KEY and (player_state.get('debug_mode') or player_state.get('god_mode')):
+                    log.info(f"Player {self._player_id} requested hot reload in {'god' if player_state.get('god_mode') else 'debug'} mode.")
+                    player_state['confirmation_prompt'] = "Are you sure you want to hot reload the server? (y/n)"
+                    action_taken = True
+
+                # Handle hot reload confirmation
+                elif player_state.get('confirmation_prompt') and "hot reload" in player_state['confirmation_prompt']:
+                    if data_str.lower() == 'y':
+                        log.info(f"Player {self._player_id} confirmed hot reload.")
+                        # Set a flag to trigger server restart
+                        global clean_shutdown_requested
+                        clean_shutdown_requested = True
+                        shutdown_event.set()
+                        feedback_msg = "Hot reloading server..."
+                        feedback_expiry = 2.0
+                        action_taken = True
+                    else:
+                        feedback_msg = "Hot reload cancelled."
+                        feedback_expiry = 2.0
+                        action_taken = True
+                    player_state['confirmation_prompt'] = None
 
                 # Check for 'r' (Initiate Respawn)
                 elif data_str == 'r':
