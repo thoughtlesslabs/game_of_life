@@ -28,7 +28,7 @@ RENDER_LIVE = "█"  # Block for live cells
 RENDER_PLAYER = "★"  # Star for player
 RENDER_OTHER_PLAYER = "●"  # Dot for other players
 
-# Screen clearing codes
+# Screen handling codes
 CLEAR_SCREEN = "\033[2J\033[H"  # Clear screen and move cursor to top
 CLEAR_LINE = "\033[K"  # Clear current line
 CLEAR_TO_END = "\033[J"  # Clear from cursor to end of screen
@@ -37,6 +37,8 @@ HIDE_CURSOR = "\033[?25l"  # Hide cursor
 SHOW_CURSOR = "\033[?25h"  # Show cursor
 SAVE_CURSOR = "\033[s"  # Save cursor position
 RESTORE_CURSOR = "\033[u"  # Restore cursor position
+ALTERNATE_SCREEN = "\033[?1049h"  # Enable alternate screen buffer
+RESTORE_SCREEN = "\033[?1049l"  # Restore main screen buffer
 
 # Internal grid states
 INTERNAL_DEAD = 0
@@ -540,9 +542,9 @@ class GameOfLife:
         # Get terminal size for responsive viewport
         try:
             term_cols, term_rows = os.get_terminal_size()
-            # Use 80% of terminal width and 50% of terminal height (reduced from 60%)
+            # Use 80% of terminal width and 50% of terminal height
             view_width = int(term_cols * 0.8)
-            view_height = int(term_rows * 0.5)  # Reduced from 0.6 to 0.5
+            view_height = int(term_rows * 0.5)
             # Ensure minimum size
             view_width = max(60, view_width)
             view_height = max(30, view_height)
@@ -551,8 +553,8 @@ class GameOfLife:
             view_width = 80
             view_height = 40
 
-        # Start with a complete screen clear and cursor handling
-        render_output = HIDE_CURSOR + SAVE_CURSOR + CLEAR_ALL
+        # Start with alternate screen buffer and cursor handling
+        render_output = ALTERNATE_SCREEN + HIDE_CURSOR + SAVE_CURSOR
 
         center_r, center_c = player_pos
 
@@ -560,10 +562,10 @@ class GameOfLife:
         start_r = (center_r - view_height // 2) % self.height
         start_c = (center_c - view_width // 2) % self.width
 
-        # Build the viewport
-        viewport = []
+        # Build the viewport with pre-allocated list for better performance
+        viewport = [''] * view_height
         for i in range(view_height):
-            row = []
+            row = [''] * view_width
             for j in range(view_width):
                 # Calculate actual grid position with wrapping
                 r = (start_r + i) % self.height
@@ -572,118 +574,87 @@ class GameOfLife:
                 
                 # Determine what to display
                 if cell == INTERNAL_DEAD:
-                    row.append(RENDER_DEAD)
+                    row[j] = RENDER_DEAD
                 elif cell == INTERNAL_LIVE:
-                    row.append(RENDER_LIVE)
+                    row[j] = RENDER_LIVE
                 elif cell == requesting_player_id:
-                    row.append(RENDER_PLAYER)
+                    row[j] = RENDER_PLAYER
                 else:
-                    row.append(RENDER_OTHER_PLAYER)
-            viewport.append(''.join(row))
+                    row[j] = RENDER_OTHER_PLAYER
+            viewport[i] = ''.join(row)
 
         # Build the status line
         player_data = self.players.get(requesting_player_id, {})
         respawn_count = player_data.get('respawn_count', 0)
-        wins = player_data.get('wins', 0)  # Get win count
+        wins = player_data.get('wins', 0)
         last_respawn = player_data.get('last_respawn_time', 0)
         current_time = asyncio.get_event_loop().time() if asyncio.get_running_loop() else time.time()
         cooldown_remaining = max(0, RESPAWN_COOLDOWN - (current_time - last_respawn))
         
-        # Add overview section
+        # Pre-build all sections for better performance
         overview = f"\n{COLOR_BOLD}Game of Life - Multiplayer Edition{COLOR_RESET}"
         overview += f"\nActive Players: {len(self.players)} | Current Generation: {self.generation_count}/2500"
         overview += f"\nYour Wins: {wins} | Respawns: {respawn_count} | Cooldown: {cooldown_remaining:.1f}s"
         overview += "\n"
         
-        # Add legend and game stats with horizontal layout
         legend = f"\nLegend: {RENDER_DEAD}=Empty {RENDER_LIVE}=Live {RENDER_PLAYER}=You {RENDER_OTHER_PLAYER}=Other"
         
-        # Remove generation count and players count from game_stats since they're now in overview
-        game_stats = ""
-        
-        # Remove respawn info since it's now in overview
-        respawn_info = ""
-        
-        # Add god mode stats if enabled
-        god_mode_stats = ""
-        if player_state.get('god_mode'):
-            live_count = self.get_live_cell_count()
-            god_mode_stats = f" | GOD MODE ACTIVE | Live: {live_count} | R=Restart | g=Exit"
-
         # Add key instructions
         key_instructions = "\nKeys: r=respawn | q=quit"
         if player_state.get('debug_mode') or player_state.get('god_mode'):
             key_instructions += " | h=hot reload"
-        key_instructions += "\n"  # Add extra newline after keys
+        key_instructions += "\n"
 
         # Generate leaderboard
-        # Get all players and their cell counts
         player_scores = []
         for pid in self.players:
             cell_count = self.get_player_cell_count(pid)
-            # Get generations in lead from player data
             generations_in_lead = self.players[pid].get('generations_in_lead', 0)
             player_scores.append((pid, cell_count, generations_in_lead))
         
-        # Sort by cell count (descending) and take top 3
         player_scores.sort(key=lambda x: x[1], reverse=True)
         top_3 = player_scores[:3]
         
-        # Create leaderboard string with highlighting for current player and all-time leader
-        leaderboard = "\nTop 3 Players:"  # Removed extra newline before
-        
-        # Find the all-time leader (player with most generations in lead)
+        leaderboard = "\nTop 3 Players:"
         all_time_leader = max(self.players.items(), key=lambda x: x[1].get('generations_in_lead', 0))[0] if self.players else None
         
-        # Always show 3 lines, with placeholder text for empty positions
         for i in range(1, 4):
             if i <= len(top_3):
                 pid, score, gens = top_3[i-1]
-                # Show "me" instead of "Player X" for the current player
                 player_text = "me" if pid == requesting_player_id else f"Player {pid}"
                 row = f"{i}. {player_text}: {score} cells (Leader for {gens} gens)"
                 if pid == requesting_player_id:
-                    # If player is the all-time leader, use gold color
                     if pid == all_time_leader:
                         row = f"{COLOR_BOLD}{COLOR_PLAYER}{row}{COLOR_RESET}"
                     else:
-                        # If player is not the all-time leader, use green
                         row = f"{COLOR_BOLD}\033[38;5;40m{row}{COLOR_RESET}"
                 elif pid == all_time_leader:
-                    # If someone else is the all-time leader, highlight them in gold
                     row = f"{COLOR_BOLD}{COLOR_PLAYER}{row}{COLOR_RESET}"
             else:
-                # Show placeholder text for empty positions
                 row = f"{i}. Waiting for players..."
             leaderboard += f"\n{row}"
-        leaderboard += "\n"  # Add final newline after leaderboard
+        leaderboard += "\n"
 
-        # Add all messages below the leaderboard
+        # Build messages section
         messages = []
-        
-        # Add respawn confirmation prompt if active
         if player_state.get('confirmation_prompt'):
             messages.append(player_state['confirmation_prompt'])
-        
-        # Add any feedback message
         if player_state.get('feedback_message'):
             messages.append(player_state['feedback_message'])
-        
-        # Add command prompt
         command_prompt = "\nEnter command: "
 
         # Combine everything with proper spacing and restore cursor
-        return render_output + '\n'.join(viewport) + overview + legend + game_stats + respawn_info + god_mode_stats + key_instructions + leaderboard + '\n'.join(messages) + command_prompt + RESTORE_CURSOR + SHOW_CURSOR
+        return render_output + '\n'.join(viewport) + overview + legend + key_instructions + leaderboard + '\n'.join(messages) + command_prompt + RESTORE_CURSOR + SHOW_CURSOR + RESTORE_SCREEN
 
 # Example usage (only if run directly)
 if __name__ == "__main__":
     import asyncio 
     import time
 
-    cols, rows = 80, 24 # Fixed size for direct run example
+    cols, rows = 80, 24
     try:
          term_cols, term_rows = os.get_terminal_size()
-         cols, rows = term_cols, term_rows - 5 # Leave more space for potential prompts
+         cols, rows = term_cols, term_rows - 5
     except OSError:
          pass 
 
@@ -691,7 +662,6 @@ if __name__ == "__main__":
     game.add_player(1)
     game.add_player(99)
 
-    # Simulate player 1 state for testing
     player_1_state = {
          'confirmation_prompt': None, 
          'feedback_message': "Test Feedback!", 
@@ -704,7 +674,6 @@ if __name__ == "__main__":
         
         while True:
             current_time_test = time.time()
-            # Simulate checking expiry
             if player_1_state.get('feedback_message') and current_time_test >= player_1_state.get('feedback_expiry_time', 0.0):
                  player_1_state['feedback_message'] = None
                  player_1_state['feedback_expiry_time'] = 0.0
@@ -720,4 +689,4 @@ if __name__ == "__main__":
     finally:
         # Restore terminal settings
         termios.tcsetattr(sys.stdin, termios.TCSADRAIN, old_settings)
-        print(SHOW_CURSOR)  # Ensure cursor is shown on exit
+        print(SHOW_CURSOR + RESTORE_SCREEN)  # Ensure cursor is shown and screen is restored on exit
