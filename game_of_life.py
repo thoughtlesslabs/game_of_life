@@ -374,9 +374,20 @@ class GameOfLife:
         if not player_pos:
             return "Error: Player not found in game state."
 
-        # Calculate viewport boundaries
-        view_height = 20  # Fixed viewport height
-        view_width = 40   # Fixed viewport width
+        # Get terminal size for responsive viewport
+        try:
+            term_cols, term_rows = os.get_terminal_size()
+            # Use 80% of terminal width and height for game board
+            view_width = int(term_cols * 0.8)
+            view_height = int(term_rows * 0.6)
+            # Ensure minimum size
+            view_width = max(60, view_width)
+            view_height = max(30, view_height)
+        except OSError:
+            # Fallback to default sizes if terminal size detection fails
+            view_width = 80
+            view_height = 40
+
         center_r, center_c = player_pos
 
         # Calculate viewport boundaries with wrapping
@@ -411,29 +422,43 @@ class GameOfLife:
         current_time = asyncio.get_event_loop().time() if asyncio.get_running_loop() else time.time()
         cooldown_remaining = max(0, RESPAWN_COOLDOWN - (current_time - last_respawn))
         
-        # Add legend and game stats
-        legend = f"Legend: {RENDER_DEAD}=Dead {RENDER_LIVE}=Live {RENDER_PLAYER}=You {RENDER_OTHER_PLAYER}=Other"
-        game_stats = f"Gen: {self.generation_count} | Players: {len(self.players)}"
-        respawn_info = f"Respawns: {respawn_count} | Cooldown: {cooldown_remaining:.1f}s"
+        # Add legend and game stats with better spacing
+        legend = f"\nLegend:"
+        legend += f"\n  {RENDER_DEAD} = Dead Cell"
+        legend += f"\n  {RENDER_LIVE} = Live Cell"
+        legend += f"\n  {RENDER_PLAYER} = Your Position"
+        legend += f"\n  {RENDER_OTHER_PLAYER} = Other Players"
+        
+        game_stats = f"\nGame Status:"
+        game_stats += f"\n  Generation: {self.generation_count}"
+        game_stats += f"\n  Players Online: {len(self.players)}"
+        
+        respawn_info = f"\nRespawn Status:"
+        respawn_info += f"\n  Respawn Count: {respawn_count}"
+        respawn_info += f"\n  Cooldown: {cooldown_remaining:.1f}s"
         
         # Add god mode stats if enabled
         god_mode_stats = ""
         if player_state.get('god_mode'):
             live_count = self.get_live_cell_count()
-            god_mode_stats = f"\nGOD MODE ACTIVE | Live: {live_count} | Press 'R' to restart | Press 'g' to exit"
+            god_mode_stats = f"\nGOD MODE ACTIVE:"
+            god_mode_stats += f"\n  Live Cells: {live_count}"
+            god_mode_stats += f"\n  Controls:"
+            god_mode_stats += f"\n    R = Restart Game"
+            god_mode_stats += f"\n    g = Exit God Mode"
 
         # Add any feedback message
         feedback = ""
         if player_state.get('feedback_message'):
-            feedback = f"\n{player_state['feedback_message']}"
+            feedback = f"\n\n{player_state['feedback_message']}"
 
         # Add respawn confirmation prompt if active
         prompt = ""
         if player_state.get('confirmation_prompt'):
-            prompt = f"\n{player_state['confirmation_prompt']}"
+            prompt = f"\n\n{player_state['confirmation_prompt']}"
 
-        # Combine everything
-        return '\n'.join(viewport) + '\n' + legend + '\n' + game_stats + '\n' + respawn_info + god_mode_stats + feedback + prompt
+        # Combine everything with proper spacing
+        return '\n'.join(viewport) + legend + game_stats + respawn_info + god_mode_stats + feedback + prompt
 
 # Example usage (only if run directly)
 if __name__ == "__main__":
